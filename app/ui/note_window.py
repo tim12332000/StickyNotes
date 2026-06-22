@@ -81,6 +81,9 @@ class NoteWindow(QMainWindow):
         self._delete_note = delete_note
         self._save_window_state = save_window_state
         self._ready_to_save_state = False
+        self._collapsed = False
+        self._expanded_height = DEFAULT_WINDOW_HEIGHT
+        self._expanded_min_height = 0
 
         self.setWindowTitle("Sticky Notes")
         self.setWindowIcon(asset_icon("note.svg"))
@@ -190,6 +193,13 @@ class NoteWindow(QMainWindow):
                 "trash.svg", "刪除並移到回收區", self._delete_current_note
             )
         )
+        self._collapse_button = self._button(
+            "collapse.svg", "收合", self._toggle_collapsed
+        )
+        layout.addWidget(self._collapse_button)
+        layout.addWidget(
+            self._button("minimize.svg", "最小化", self.showMinimized)
+        )
         layout.addWidget(
             self._button(
                 "close.svg",
@@ -260,6 +270,29 @@ class NoteWindow(QMainWindow):
         self._flush_pending_save()
         self._delete_note(self._note.note_id)
 
+    def _toggle_collapsed(self) -> None:
+        # Roll the note up to just its title bar, or unroll it again. The window
+        # stays on screen; only the body is hidden.
+        maximum_height = 16777215  # QWIDGETSIZE_MAX
+        if self._collapsed:
+            self._editor.show()
+            self.setMaximumHeight(maximum_height)
+            self.setMinimumHeight(self._expanded_min_height)
+            self.resize(self.width(), self._expanded_height)
+            self._collapsed = False
+            self._collapse_button.setIcon(asset_icon("collapse.svg"))
+            self._collapse_button.setToolTip("收合")
+        else:
+            self._expanded_height = self.height()
+            self._expanded_min_height = self.minimumHeight()
+            collapsed_height = self.height() - self._editor.height()
+            self._editor.hide()
+            self.setMinimumHeight(0)
+            self.setFixedHeight(collapsed_height)
+            self._collapsed = True
+            self._collapse_button.setIcon(asset_icon("expand.svg"))
+            self._collapse_button.setToolTip("展開")
+
     def _schedule_state_save(self) -> None:
         if self._ready_to_save_state:
             self._state_timer.start()
@@ -268,13 +301,16 @@ class NoteWindow(QMainWindow):
         if not self._ready_to_save_state:
             return
         geometry = self.geometry()
+        # While collapsed the window is only as tall as the title bar; persist the
+        # expanded height so the note reopens at a usable size.
+        height = self._expanded_height if self._collapsed else geometry.height()
         self._save_window_state(
             self._note.note_id,
             NoteWindowState(
                 x=geometry.x(),
                 y=geometry.y(),
                 width=geometry.width(),
-                height=geometry.height(),
+                height=height,
             ),
         )
 

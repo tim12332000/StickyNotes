@@ -76,7 +76,7 @@ def test_header_uses_accessible_icon_buttons(application: QApplication) -> None:
 
     buttons = window.findChildren(QToolButton)
 
-    assert len(buttons) == 4
+    assert len(buttons) == 6
     assert all(button.text() == "" for button in buttons)
     assert all(not button.icon().isNull() for button in buttons)
     assert all(button.accessibleName() for button in buttons)
@@ -149,6 +149,57 @@ def test_color_is_applied_only_to_the_header(application: QApplication) -> None:
     assert "#noteHeader { background: #b3e5fc; }" in style
     assert "#noteBody { background: #1e1e1e;" in style
     assert "QPlainTextEdit { background: #1e1e1e; color: #f5f5f5;" in style
+    window.close()
+
+
+def test_collapse_rolls_up_to_the_title_bar_and_back(
+    application: QApplication,
+) -> None:
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+    )
+    window.resize(300, 260)
+    window.show()
+    application.processEvents()
+    expanded_height = window.height()
+    assert window._editor.isVisible()
+
+    window._toggle_collapsed()
+    application.processEvents()
+    assert not window._editor.isVisible()
+    assert window.height() < expanded_height
+
+    window._toggle_collapsed()
+    application.processEvents()
+    assert window._editor.isVisible()
+    assert window.height() == expanded_height
+    window.close()
+
+
+def test_collapsed_window_persists_expanded_height(
+    application: QApplication,
+) -> None:
+    saved_states: list[NoteWindowState] = []
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: saved_states.append(state),
+    )
+    window.resize(300, 260)
+    window.show()
+    application.processEvents()
+    expanded_height = window.height()
+
+    window._toggle_collapsed()
+    window.save_before_exit()
+
+    assert saved_states[-1].height == expanded_height
     window.close()
 
 
