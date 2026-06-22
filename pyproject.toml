@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sticky-notes"
+version = "0.1.0"
+description = "A local-first Windows desktop sticky notes application."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "PyInstaller>=6,<7",
+    "pytest>=8,<9",
+]
+
+[project.scripts]
+sticky-notes = "app.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
