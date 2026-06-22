@@ -38,6 +38,10 @@ class NoteRepository:
         self._notes_directory.mkdir(parents=True, exist_ok=True)
         self._trash_directory.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def data_directory(self) -> Path:
+        return self._data_directory
+
     def create_note(self) -> Note:
         note = Note()
         self.save_note(note)

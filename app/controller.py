@@ -1,18 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from app.config import (
-    MAX_FONT_SIZE,
-    MIN_FONT_SIZE,
-    get_credentials_path,
-    get_sync_state_path,
-    get_token_path,
-)
+from app.config import AUTO_SYNC_DELAY_MILLISECONDS, MAX_FONT_SIZE, MIN_FONT_SIZE
 from app.icons import asset_icon
 from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
@@ -48,6 +43,11 @@ class StickyNotesController:
         self._tray_icon: QSystemTrayIcon | None = None
         self._restore_menu: QMenu | None = None
         self._sync_worker: SyncWorker | None = None
+        self._sync_silent = False
+        self._auto_sync_timer = QTimer()
+        self._auto_sync_timer.setSingleShot(True)
+        self._auto_sync_timer.setInterval(AUTO_SYNC_DELAY_MILLISECONDS)
+        self._auto_sync_timer.timeout.connect(lambda: self._start_sync(silent=True))
         self._font_family, self._font_size = repository.load_font_settings()
         self._application.aboutToQuit.connect(self._save_all_notes)
 
@@ -58,6 +58,8 @@ class StickyNotesController:
             notes.append(self._repository.create_note())
         for note in notes:
             self._open_note(note)
+        # Sync once on launch, but only if already authorized (never pops a browser).
+        self._start_sync(silent=True)
 
     def create_note(self, source_note_id: UUID | None = None) -> None:
         note = self._repository.create_note()
@@ -83,6 +85,7 @@ class StickyNotesController:
                     ),
                 )
         self._open_note(note)
+        self._schedule_auto_sync()
 
     def show_all_notes(self) -> None:
         for window in self._windows.values():
@@ -96,7 +99,7 @@ class StickyNotesController:
 
         window = NoteWindow(
             note=note,
-            save_note=self._repository.save_note,
+            save_note=self._save_note,
             create_note=lambda *_, source_id=note.note_id: self.create_note(source_id),
             delete_note=self._delete_note,
             save_window_state=self._repository.save_window_state,
@@ -108,6 +111,10 @@ class StickyNotesController:
         self._windows[note.note_id] = window
         window.show_and_activate()
 
+    def _save_note(self, note: Note) -> None:
+        self._repository.save_note(note)
+        self._schedule_auto_sync()
+
     def _change_font(self, family: str, size: int) -> None:
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size))
         if family == self._font_family and size == self._font_size:
@@ -118,15 +125,44 @@ class StickyNotesController:
         for window in self._windows.values():
             window.apply_font(family, size)
 
+    def _credentials_path(self) -> Path:
+        in_data = self._repository.data_directory / "credentials.json"
+        if in_data.exists():
+            return in_data
+        in_cwd = Path("credentials.json").resolve()
+        if in_cwd.exists():
+            return in_cwd
+        return in_data
+
+    def _token_path(self) -> Path:
+        return self._repository.data_directory / "token.json"
+
+    def _sync_state_path(self) -> Path:
+        return self._repository.data_directory / "sync-state.json"
+
+    def _schedule_auto_sync(self) -> None:
+        # Only debounce a sync once the user has authorized; otherwise editing
+        # would silently do nothing (and must never trigger an OAuth prompt).
+        if self._token_path().exists():
+            self._auto_sync_timer.start()
+
     def _sync_now(self) -> None:
+        self._start_sync(silent=False)
+
+    def _start_sync(self, *, silent: bool) -> None:
         if self._sync_worker is not None and self._sync_worker.isRunning():
-            self._notify("雲端同步已在進行中…")
+            if not silent:
+                self._notify("雲端同步已在進行中…")
             return
-        credentials_path = get_credentials_path()
+        credentials_path = self._credentials_path()
         if not credentials_path.exists():
-            self._notify(
-                "找不到 credentials.json，請放到：\n" + str(credentials_path.parent)
-            )
+            if not silent:
+                self._notify(
+                    "找不到 credentials.json，請放到：\n" + str(credentials_path.parent)
+                )
+            return
+        # Auto/startup sync must stay silent — never pop an interactive browser.
+        if silent and not self._token_path().exists():
             return
         # Make sure debounced edits are on disk so the sync sees the latest text.
         for window in self._windows.values():
@@ -134,28 +170,38 @@ class StickyNotesController:
 
         from app.sync import GoogleDriveBackend
 
-        backend = GoogleDriveBackend(credentials_path, get_token_path())
-        engine = SyncEngine(self._repository, backend, get_sync_state_path())
+        backend = GoogleDriveBackend(credentials_path, self._token_path())
+        engine = SyncEngine(self._repository, backend, self._sync_state_path())
         worker = SyncWorker(engine, self._application)
+        self._sync_silent = silent
         worker.finished_ok.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_error)
         self._sync_worker = worker
-        self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
+        if not silent:
+            self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
         worker.start()
 
     def _on_sync_done(self, result: SyncResult) -> None:
         self._refresh_after_sync()
-        deleted = len(result.deleted_local) + len(result.deleted_remote)
-        summary = (
-            f"上傳 {len(result.uploaded)}、下載 {len(result.downloaded)}、刪除 {deleted}"
-        )
-        if result.conflicts:
-            summary += f"、衝突副本 {len(result.conflicts)}"
-        self._notify("雲端同步完成：" + summary)
+        if not self._sync_silent:
+            deleted = len(result.deleted_local) + len(result.deleted_remote)
+            summary = (
+                f"上傳 {len(result.uploaded)}、下載 {len(result.downloaded)}、"
+                f"刪除 {deleted}"
+            )
+            if result.conflicts:
+                summary += f"、衝突副本 {len(result.conflicts)}"
+            self._notify("雲端同步完成：" + summary)
+        elif result.conflicts:
+            self._notify(
+                f"雲端同步發現 {len(result.conflicts)} 筆衝突，已保留副本。"
+            )
         self._finish_sync()
 
     def _on_sync_error(self, message: str) -> None:
-        self._notify("雲端同步失敗：" + message)
+        # Manual syncs report failures; silent auto-syncs fail quietly (e.g. offline).
+        if not self._sync_silent:
+            self._notify("雲端同步失敗：" + message)
         self._finish_sync()
 
     def _finish_sync(self) -> None:
@@ -193,6 +239,7 @@ class StickyNotesController:
             window.close()
             window.deleteLater()
         self._repository.delete_note(note_id)
+        self._schedule_auto_sync()
 
         if self._tray_icon is not None:
             self._tray_icon.showMessage(
@@ -208,6 +255,7 @@ class StickyNotesController:
         note = self._repository.restore_note(note_id)
         if note is not None:
             self._open_note(note)
+            self._schedule_auto_sync()
 
     def _setup_system_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():

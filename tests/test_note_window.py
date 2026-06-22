@@ -164,6 +164,41 @@ def test_refresh_after_sync_reconciles_windows(
         open_window.hide()
 
 
+def test_startup_sync_is_skipped_without_a_token(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    # No token means not authorized, so startup must not launch a sync worker.
+    assert controller._sync_worker is None
+    for window in controller._windows.values():
+        window.hide()
+
+
+def test_editing_arms_auto_sync_only_when_connected(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    note = repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+
+    # Not connected yet: saving does not arm the debounce timer.
+    controller._save_note(note)
+    assert not controller._auto_sync_timer.isActive()
+
+    # After authorization (token present): saving arms a debounced sync.
+    (tmp_path / "token.json").write_text("{}", encoding="utf-8")
+    controller._save_note(note)
+    assert controller._auto_sync_timer.isActive()
+
+    controller._auto_sync_timer.stop()
+    for window in controller._windows.values():
+        window.hide()
+
+
 def test_color_is_applied_only_to_the_header(application: QApplication) -> None:
     window = NoteWindow(
         note=Note(color="#b3e5fc"),

@@ -25,6 +25,9 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 FOLDER_MIME = "application/vnd.google-apps.folder"
 TEXT_MIME = "text/plain"
 DEFAULT_FOLDER_NAME = "StickyNotes"
+# Stop waiting for the browser redirect after this long so a denied or abandoned
+# authorization surfaces as an error instead of hanging the sync forever.
+OAUTH_TIMEOUT_SECONDS = 180
 
 
 class GoogleDriveBackend:
@@ -56,7 +59,9 @@ class GoogleDriveBackend:
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(self._credentials_path), SCOPES
             )
-            creds = flow.run_local_server(port=0)
+            creds = flow.run_local_server(
+                port=0, timeout_seconds=OAUTH_TIMEOUT_SECONDS
+            )
         self._token_path.write_text(creds.to_json(), encoding="utf-8")
         return creds
 
