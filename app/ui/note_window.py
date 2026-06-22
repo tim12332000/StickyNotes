@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import QPoint, QSize, QTimer, Qt
+from PySide6.QtCore import QEvent, QPoint, QSize, QTimer, Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QPlainTextEdit,
-    QSizeGrip,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -64,6 +63,8 @@ class DragHandle(QFrame):
 
 
 class NoteWindow(QMainWindow):
+    RESIZE_MARGIN = 6
+
     def __init__(
         self,
         note: Note,
@@ -104,18 +105,16 @@ class NoteWindow(QMainWindow):
         self._state_timer.timeout.connect(self._save_current_window_state)
 
         central_widget = QWidget(self)
+        central_widget.setObjectName("noteBody")
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
-        layout.addWidget(self._create_header())
+        self._header = self._create_header()
+        layout.addWidget(self._header)
         layout.addWidget(self._editor, 1)
-
-        resize_row = QHBoxLayout()
-        resize_row.setContentsMargins(0, 0, 0, 0)
-        resize_row.addStretch(1)
-        resize_row.addWidget(QSizeGrip(central_widget))
-        layout.addLayout(resize_row)
         self.setCentralWidget(central_widget)
+
+        self._enable_edge_resizing(central_widget)
 
         if initial_state is None:
             self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
@@ -242,18 +241,19 @@ class NoteWindow(QMainWindow):
         self._save_current_content()
 
     def _apply_color(self, color: str) -> None:
-        background = QColor(color)
-        header = background.darker(106).name()
-        border = background.darker(125).name()
+        # The chosen color paints only the title bar; the body stays a fixed
+        # dark surface with light text regardless of the selected color.
+        border = QColor(color).darker(130).name()
         self.centralWidget().setStyleSheet(
-            f"QWidget {{ background: {color}; color: #202020; }}"
-            f"#noteHeader {{ background: {header}; }}"
-            f"QMainWindow {{ border: 1px solid {border}; }}"
-            "QPlainTextEdit { padding: 8px; selection-background-color: #607d8b; }"
-            "QToolButton { border: 0; border-radius: 5px; }"
-            "QToolButton:hover { background: rgba(0, 0, 0, 24); }"
-            "QToolButton:pressed { background: rgba(0, 0, 0, 42); }"
-            "#closeButton:hover { background: rgba(190, 45, 45, 55); }"
+            f"#noteBody {{ background: #1e1e1e; border: 1px solid {border}; }}"
+            f"#noteHeader {{ background: {color}; }}"
+            "QPlainTextEdit { background: #1e1e1e; color: #f5f5f5; border: 0;"
+            " padding: 8px; selection-background-color: #2f6fb0;"
+            " selection-color: #ffffff; }"
+            "QToolButton { background: transparent; border: 0; border-radius: 5px; }"
+            "QToolButton:hover { background: rgba(0, 0, 0, 40); }"
+            "QToolButton:pressed { background: rgba(0, 0, 0, 70); }"
+            "#closeButton:hover { background: rgba(190, 45, 45, 160); }"
         )
 
     def _delete_current_note(self) -> None:
@@ -293,3 +293,78 @@ class NoteWindow(QMainWindow):
             min(max(geometry.top(), available.top()), available.bottom() - 50)
         )
         self.setGeometry(geometry)
+
+    def _enable_edge_resizing(self, central_widget: QWidget) -> None:
+        # Frameless windows have no native resize border. Watch the widgets that
+        # reach the window edge and hand drags near an edge to the OS, so resizing
+        # feels exactly like an ordinary window (live resize, cursors, snapping).
+        self._resize_targets = [
+            central_widget,
+            self._header,
+            self._editor,
+            self._editor.viewport(),
+        ]
+        self._default_cursors = {}
+        for widget in self._resize_targets:
+            self._default_cursors[widget] = widget.cursor()
+            widget.setMouseTracking(True)
+            widget.installEventFilter(self)
+        self.setMouseTracking(True)
+
+    def eventFilter(self, watched, event) -> bool:  # type: ignore[no-untyped-def]
+        event_type = event.type()
+        if (
+            event_type == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            edges = self._resize_edges_at(event.globalPosition().toPoint())
+            if edges:
+                handle = self.windowHandle()
+                if handle is not None and handle.startSystemResize(edges):
+                    return True
+        elif event_type == QEvent.Type.MouseMove and not (
+            event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            self._update_resize_cursor(
+                watched, self._resize_edges_at(event.globalPosition().toPoint())
+            )
+        return super().eventFilter(watched, event)
+
+    def _resize_edges_at(self, global_point: QPoint) -> Qt.Edge:
+        point = self.mapFromGlobal(global_point)
+        margin = self.RESIZE_MARGIN
+        edges = Qt.Edge(0)
+        if point.x() <= margin:
+            edges |= Qt.Edge.LeftEdge
+        elif point.x() >= self.width() - margin:
+            edges |= Qt.Edge.RightEdge
+        if point.y() <= margin:
+            edges |= Qt.Edge.TopEdge
+        elif point.y() >= self.height() - margin:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def _update_resize_cursor(self, widget: QWidget, edges: Qt.Edge) -> None:
+        cursor = self._resize_cursor(edges)
+        if cursor is None:
+            widget.setCursor(
+                self._default_cursors.get(widget, Qt.CursorShape.ArrowCursor)
+            )
+        else:
+            widget.setCursor(cursor)
+
+    @staticmethod
+    def _resize_cursor(edges: Qt.Edge) -> Qt.CursorShape | None:
+        left = bool(edges & Qt.Edge.LeftEdge)
+        right = bool(edges & Qt.Edge.RightEdge)
+        top = bool(edges & Qt.Edge.TopEdge)
+        bottom = bool(edges & Qt.Edge.BottomEdge)
+        if (top and left) or (bottom and right):
+            return Qt.CursorShape.SizeFDiagCursor
+        if (top and right) or (bottom and left):
+            return Qt.CursorShape.SizeBDiagCursor
+        if left or right:
+            return Qt.CursorShape.SizeHorCursor
+        if top or bottom:
+            return Qt.CursorShape.SizeVerCursor
+        return None

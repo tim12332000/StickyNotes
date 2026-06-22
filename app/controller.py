@@ -67,7 +67,7 @@ class StickyNotesController:
         window = NoteWindow(
             note=note,
             save_note=self._repository.save_note,
-            create_note=lambda source_id=note.note_id: self.create_note(source_id),
+            create_note=lambda *_, source_id=note.note_id: self.create_note(source_id),
             delete_note=self._delete_note,
             save_window_state=self._repository.save_window_state,
             initial_state=self._repository.load_window_state(note.note_id),
