@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import QPoint, QTimer, Qt
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QMouseEvent
+from PySide6.QtCore import QPoint, QSize, QTimer, Qt
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,16 +22,17 @@ from app.config import (
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
 )
+from app.icons import asset_icon, color_swatch_icon
 from app.models.note import Note, NoteWindowState
 
 
 NOTE_COLORS = (
-    ("Yellow", "#fff59d"),
-    ("Pink", "#f8bbd0"),
-    ("Blue", "#b3e5fc"),
-    ("Green", "#c8e6c9"),
-    ("Purple", "#d1c4e9"),
-    ("White", "#f5f5f5"),
+    ("黃色", "#fff59d"),
+    ("粉紅", "#f8bbd0"),
+    ("藍色", "#b3e5fc"),
+    ("綠色", "#c8e6c9"),
+    ("紫色", "#d1c4e9"),
+    ("白色", "#f5f5f5"),
 )
 
 
@@ -81,6 +82,7 @@ class NoteWindow(QMainWindow):
         self._ready_to_save_state = False
 
         self.setWindowTitle("Sticky Notes")
+        self.setWindowIcon(asset_icon("note.svg"))
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
         )
@@ -158,15 +160,22 @@ class NoteWindow(QMainWindow):
         header = DragHandle(self)
         header.setObjectName("noteHeader")
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(5, 3, 3, 3)
-        layout.setSpacing(3)
+        layout.setContentsMargins(5, 4, 4, 4)
+        layout.setSpacing(2)
 
-        layout.addWidget(self._button("+", "新增便箋", self._create_note))
+        layout.addWidget(
+            self._button(
+                "add.svg",
+                "新增便箋 (Ctrl+N)",
+                self._create_note,
+                QKeySequence.StandardKey.New,
+            )
+        )
 
-        color_button = self._button("Color", "便箋顏色")
+        color_button = self._button("palette.svg", "變更便箋顏色")
         color_menu = QMenu(color_button)
         for label, color in NOTE_COLORS:
-            action = QAction(label, color_menu)
+            action = QAction(color_swatch_icon(color), label, color_menu)
             action.setData(color)
             action.triggered.connect(
                 lambda checked=False, selected=color: self._set_color(selected)
@@ -177,20 +186,40 @@ class NoteWindow(QMainWindow):
         layout.addWidget(color_button)
 
         layout.addStretch(1)
-        layout.addWidget(self._button("Del", "刪除並移到回收區", self._delete_current_note))
-        layout.addWidget(self._button("×", "隱藏便箋", self.close))
+        layout.addWidget(
+            self._button(
+                "trash.svg", "刪除並移到回收區", self._delete_current_note
+            )
+        )
+        layout.addWidget(
+            self._button(
+                "close.svg",
+                "隱藏便箋 (Ctrl+W)",
+                self.close,
+                QKeySequence.StandardKey.Close,
+                "closeButton",
+            )
+        )
         return header
 
     def _button(
         self,
-        text: str,
+        icon_name: str,
         tooltip: str,
         callback: Callable[[], None] | None = None,
+        shortcut: QKeySequence.StandardKey | None = None,
+        object_name: str = "headerButton",
     ) -> QToolButton:
         button = QToolButton(self)
-        button.setText(text)
+        button.setObjectName(object_name)
+        button.setIcon(asset_icon(icon_name))
+        button.setIconSize(QSize(17, 17))
+        button.setFixedSize(28, 26)
         button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip.split(" (")[0])
         button.setAutoRaise(True)
+        if shortcut is not None:
+            button.setShortcut(QKeySequence(shortcut))
         if callback is not None:
             button.clicked.connect(callback)
         return button
@@ -221,8 +250,10 @@ class NoteWindow(QMainWindow):
             f"#noteHeader {{ background: {header}; }}"
             f"QMainWindow {{ border: 1px solid {border}; }}"
             "QPlainTextEdit { padding: 8px; selection-background-color: #607d8b; }"
-            "QToolButton { padding: 3px 6px; border-radius: 3px; }"
-            "QToolButton:hover { background: rgba(0, 0, 0, 25); }"
+            "QToolButton { border: 0; border-radius: 5px; }"
+            "QToolButton:hover { background: rgba(0, 0, 0, 24); }"
+            "QToolButton:pressed { background: rgba(0, 0, 0, 42); }"
+            "#closeButton:hover { background: rgba(190, 45, 45, 55); }"
         )
 
     def _delete_current_note(self) -> None:

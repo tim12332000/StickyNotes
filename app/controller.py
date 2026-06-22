@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from app.icons import asset_icon
 from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
 from app.storage.note_repository import NoteRepository
@@ -102,23 +103,24 @@ class StickyNotesController:
             return
 
         self._application.setQuitOnLastWindowClosed(False)
-        tray_icon = QSystemTrayIcon(self._create_icon(), self._application)
+        tray_icon = QSystemTrayIcon(asset_icon("note.svg"), self._application)
         menu = QMenu()
-        menu.addAction("新增便箋", lambda: self.create_note())
-        menu.addAction("顯示所有便箋", self.show_all_notes)
+        menu.addAction(asset_icon("add.svg"), "新增便箋", lambda: self.create_note())
+        menu.addAction(asset_icon("show.svg"), "顯示所有便箋", self.show_all_notes)
 
-        restore_menu = menu.addMenu("復原已刪除便箋")
+        restore_menu = menu.addMenu(asset_icon("restore.svg"), "復原已刪除便箋")
         restore_menu.aboutToShow.connect(self._populate_restore_menu)
         self._restore_menu = restore_menu
 
         startup_action = QAction("開機時自動啟動", menu)
+        startup_action.setIcon(asset_icon("startup.svg"))
         startup_action.setCheckable(True)
         startup_action.setChecked(is_startup_enabled())
         startup_action.toggled.connect(set_startup_enabled)
         menu.addAction(startup_action)
 
         menu.addSeparator()
-        menu.addAction("結束", self._quit)
+        menu.addAction(asset_icon("quit.svg"), "結束", self._quit)
         tray_icon.setContextMenu(menu)
         tray_icon.activated.connect(self._tray_activated)
         tray_icon.show()
@@ -137,7 +139,7 @@ class StickyNotesController:
         for deleted_note in reversed(deleted_notes):
             first_line = deleted_note.note.content.strip().splitlines()
             label = first_line[0][:35] if first_line else "空白便箋"
-            action = self._restore_menu.addAction(label)
+            action = self._restore_menu.addAction(asset_icon("restore.svg"), label)
             action.triggered.connect(
                 lambda checked=False, note_id=deleted_note.note.note_id: self._restore_note(
                     note_id
@@ -147,11 +149,6 @@ class StickyNotesController:
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_all_notes()
-
-    def _create_icon(self) -> QIcon:
-        pixmap = QPixmap(32, 32)
-        pixmap.fill(QColor("#fff176"))
-        return QIcon(pixmap)
 
     def _save_all_notes(self) -> None:
         for window in self._windows.values():

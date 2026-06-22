@@ -8,7 +8,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QToolButton
 
 from app.controller import StickyNotesController
 from app.models.note import Note, NoteWindowState
@@ -62,6 +62,24 @@ def test_color_change_is_saved(application: QApplication) -> None:
 
     assert note.color == "#c8e6c9"
     assert saved_colors[-1] == "#c8e6c9"
+
+
+def test_header_uses_accessible_icon_buttons(application: QApplication) -> None:
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+    )
+
+    buttons = window.findChildren(QToolButton)
+
+    assert len(buttons) == 4
+    assert all(button.text() == "" for button in buttons)
+    assert all(not button.icon().isNull() for button in buttons)
+    assert all(button.accessibleName() for button in buttons)
+    window.close()
 
 
 def test_new_note_is_offset_from_source_window(

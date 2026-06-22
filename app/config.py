@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -21,3 +22,10 @@ def get_data_directory() -> Path:
         return Path(local_app_data) / APPLICATION_NAME / "data"
 
     return Path.home() / f".{APPLICATION_NAME.lower()}" / "data"
+
+
+def get_asset_path(name: str) -> Path:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        return Path(bundle_root) / "app" / "assets" / name
+    return Path(__file__).resolve().parent / "assets" / name
