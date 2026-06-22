@@ -177,9 +177,17 @@ class StickyNotesController:
         worker.finished_ok.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_error)
         self._sync_worker = worker
+        self._set_sync_indicator(True)
         if not silent:
             self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
         worker.start()
+
+    def _set_sync_indicator(self, active: bool) -> None:
+        for window in self._windows.values():
+            if active:
+                window.start_sync_indicator()
+            else:
+                window.stop_sync_indicator()
 
     def _on_sync_done(self, result: SyncResult) -> None:
         self._refresh_after_sync()
@@ -205,6 +213,7 @@ class StickyNotesController:
         self._finish_sync()
 
     def _finish_sync(self) -> None:
+        self._set_sync_indicator(False)
         worker = self._sync_worker
         self._sync_worker = None
         if worker is not None:

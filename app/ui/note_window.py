@@ -12,6 +12,8 @@ from PySide6.QtGui import (
     QGuiApplication,
     QKeySequence,
     QMouseEvent,
+    QPainter,
+    QPen,
 )
 from PySide6.QtWidgets import (
     QFrame,
@@ -71,6 +73,47 @@ class DragHandle(QFrame):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_offset = None
         super().mouseReleaseEvent(event)
+
+
+class SyncSpinner(QWidget):
+    """A small rotating arc shown in the title bar while a sync is running."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._angle = 0
+        self.setFixedSize(20, 20)
+        self.setToolTip("雲端同步中…")
+        self._timer = QTimer(self)
+        self._timer.setInterval(70)
+        self._timer.timeout.connect(self._advance)
+        self.hide()
+
+    @property
+    def is_spinning(self) -> bool:
+        return self._timer.isActive()
+
+    def start(self) -> None:
+        if not self._timer.isActive():
+            self._timer.start()
+        self.show()
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self.hide()
+
+    def _advance(self) -> None:
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(41, 41, 36, 210))
+        pen.setWidth(2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        # A 280° arc whose start angle advances each tick reads as a spinner.
+        painter.drawArc(self.rect().adjusted(3, 3, -3, -3), self._angle * 16, 280 * 16)
 
 
 class NoteWindow(QMainWindow):
@@ -169,6 +212,12 @@ class NoteWindow(QMainWindow):
         """Write any debounced edit to disk now (used before a sync run)."""
         self._flush_pending_save()
 
+    def start_sync_indicator(self) -> None:
+        self._spinner.start()
+
+    def stop_sync_indicator(self) -> None:
+        self._spinner.stop()
+
     def reload(self, note: Note) -> None:
         """Replace the editor's text and color from a note pulled by sync.
 
@@ -241,6 +290,8 @@ class NoteWindow(QMainWindow):
         )
 
         layout.addStretch(1)
+        self._spinner = SyncSpinner(header)
+        layout.addWidget(self._spinner)
         layout.addWidget(
             self._button(
                 "trash.svg", "刪除並移到回收區", self._delete_current_note

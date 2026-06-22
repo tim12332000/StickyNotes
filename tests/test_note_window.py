@@ -199,6 +199,22 @@ def test_editing_arms_auto_sync_only_when_connected(
         window.hide()
 
 
+def test_sync_indicator_starts_and_stops(application: QApplication) -> None:
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+    )
+    assert not window._spinner.is_spinning
+    window.start_sync_indicator()
+    assert window._spinner.is_spinning
+    window.stop_sync_indicator()
+    assert not window._spinner.is_spinning
+    window.close()
+
+
 def test_color_is_applied_only_to_the_header(application: QApplication) -> None:
     window = NoteWindow(
         note=Note(color="#b3e5fc"),
