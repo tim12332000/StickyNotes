@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaInMemoryUpload
 
 from app.models.note import DEFAULT_NOTE_COLOR
-from app.sync.backend import RemoteRecord
+from app.sync.backend import RemoteRecord, content_revision
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 FOLDER_MIME = "application/vnd.google-apps.folder"
@@ -117,14 +117,27 @@ class GoogleDriveBackend:
     @staticmethod
     def _record(file: dict, content: str = "") -> RemoteRecord:
         props = file.get("appProperties") or {}
+        color = props.get("color", DEFAULT_NOTE_COLOR)
         return RemoteRecord(
             note_id=props.get("noteId", ""),
-            revision=str(file.get("version", "")),
+            # Files we wrote carry the fingerprint in "rev"; legacy ones are
+            # fingerprinted from their (downloaded) content instead.
+            revision=props.get("rev") or content_revision(content, color),
             created_at=props.get("createdAt", ""),
             updated_at=props.get("updatedAt", ""),
-            color=props.get("color", DEFAULT_NOTE_COLOR),
+            color=color,
             content=content,
         )
+
+    def _download_text(self, file_id: str) -> str:
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(
+            buffer, self._drive().files().get_media(fileId=file_id)
+        )
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buffer.getvalue().decode("utf-8")
 
     # -- SyncBackend protocol ----------------------------------------------------
 
@@ -138,15 +151,21 @@ class GoogleDriveBackend:
                 .list(
                     q=f"'{self._folder()}' in parents and trashed=false",
                     spaces="drive",
-                    fields="nextPageToken, files(id,name,version,appProperties)",
+                    fields="nextPageToken, files(id,name,appProperties)",
                     pageToken=page_token,
                 )
                 .execute()
             )
             for file in response.get("files", []):
-                record = self._record(file)
-                if record.note_id:
-                    records[record.note_id] = record
+                props = file.get("appProperties") or {}
+                if not props.get("noteId"):
+                    continue
+                if props.get("rev"):
+                    record = self._record(file)
+                else:
+                    # Legacy file with no fingerprint — derive one from content.
+                    record = self._record(file, content=self._download_text(file["id"]))
+                records[record.note_id] = record
             page_token = response.get("nextPageToken")
             if not page_token:
                 return records
@@ -155,18 +174,13 @@ class GoogleDriveBackend:
         file_id = self._file_id(note_id)
         if file_id is None:
             raise KeyError(note_id)
-        drive = self._drive()
         meta = (
-            drive.files()
-            .get(fileId=file_id, fields="id,name,version,appProperties")
+            self._drive()
+            .files()
+            .get(fileId=file_id, fields="id,name,appProperties")
             .execute()
         )
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, drive.files().get_media(fileId=file_id))
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return self._record(meta, content=buffer.getvalue().decode("utf-8"))
+        return self._record(meta, content=self._download_text(file_id))
 
     def put(
         self,
@@ -182,11 +196,12 @@ class GoogleDriveBackend:
             "color": color,
             "createdAt": created_at,
             "updatedAt": updated_at,
+            "rev": content_revision(content, color),
         }
         media = MediaInMemoryUpload(
             content.encode("utf-8"), mimetype=TEXT_MIME, resumable=False
         )
-        fields = "id,name,version,appProperties"
+        fields = "id,name,appProperties"
         file_id = self._file_id(note_id)
         if file_id is None:
             file = (

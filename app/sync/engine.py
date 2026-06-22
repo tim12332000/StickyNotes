@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 from app.models.note import Note
 from app.storage.note_repository import NoteRepository
-from app.sync.backend import RemoteRecord, SyncBackend
+from app.sync.backend import RemoteRecord, SyncBackend, content_revision
 
 STATE_FORMAT_VERSION = 1
 
@@ -70,10 +70,15 @@ class SyncEngine:
         result: SyncResult,
     ) -> None:
         base = state.get(note_id)
+        base_revision = base.get("revision") if base else None
+        local_revision = (
+            content_revision(local.content, local.color) if local is not None else None
+        )
+        remote_revision = remote.revision if remote is not None else None
 
         if local is not None and remote is not None:
-            local_changed = base is None or local.updated_at != base["updated_at"]
-            remote_changed = base is None or remote.revision != base["revision"]
+            local_changed = local_revision != base_revision
+            remote_changed = remote_revision != base_revision
             if not local_changed and not remote_changed:
                 return
             if local_changed and not remote_changed:
@@ -82,6 +87,10 @@ class SyncEngine:
             elif remote_changed and not local_changed:
                 self._pull(note_id, remote, state)
                 result.downloaded.append(note_id)
+            elif local_revision == remote_revision:
+                # Both sides reached the same content — just record the baseline,
+                # no transfer and no conflict (also how legacy state migrates).
+                state[note_id] = {"revision": remote_revision}
             else:
                 self._resolve_conflict(note_id, local, remote, state, result)
         elif local is not None:
@@ -111,7 +120,7 @@ class SyncEngine:
         record = self._backend.put(
             note_id, note.content, note.color, note.created_at, note.updated_at
         )
-        state[note_id] = {"revision": record.revision, "updated_at": note.updated_at}
+        state[note_id] = {"revision": record.revision}
 
     def _pull(
         self, note_id: str, remote: RemoteRecord, state: dict[str, dict[str, str]]
@@ -127,7 +136,7 @@ class SyncEngine:
             ),
             touch=False,
         )
-        state[note_id] = {"revision": remote.revision, "updated_at": remote.updated_at}
+        state[note_id] = {"revision": remote.revision}
 
     def _resolve_conflict(
         self,

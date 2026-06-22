@@ -131,6 +131,26 @@ def test_conflicting_edits_keep_both_versions(tmp_path: Path) -> None:
     assert backend.get_content(str(conflict_copies[0].note_id)).content == "local edit"
 
 
+def test_identical_change_on_both_sides_is_not_a_conflict(tmp_path: Path) -> None:
+    repository, backend, engine = _build(tmp_path)
+    note = repository.create_note()
+    engine.sync()
+    note_id = str(note.note_id)
+
+    # Both sides independently end up with the exact same content.
+    note.content = "same text"
+    note.updated_at = LATER
+    repository.save_note(note, touch=False)
+    backend.put(note_id, "same text", note.color, note.created_at, LATEST)
+
+    result = engine.sync()
+
+    assert result.conflicts == []
+    notes = _notes_by_id(repository)
+    assert len(notes) == 1
+    assert notes[note_id].content == "same text"
+
+
 def test_repeated_sync_is_a_noop(tmp_path: Path) -> None:
     repository, backend, engine = _build(tmp_path)
     repository.create_note()
