@@ -114,6 +114,7 @@ class StickyNotesController:
             change_font=self._change_font,
             font_family=self._font_family,
             font_size=self._font_size,
+            request_sync=self._sync_now,
         )
         self._windows[note.note_id] = window
         window.set_sync_state(self._sync_state)
@@ -288,7 +289,7 @@ class StickyNotesController:
         menu.addAction(asset_icon("add.svg"), "新增便箋", lambda: self.create_note())
         menu.addAction(asset_icon("show.svg"), "顯示所有便箋", self.show_all_notes)
         menu.addAction(
-            asset_icon("cloud.svg"), "雲端同步 (Google Drive)", self._sync_now
+            asset_icon("cloud.svg"), "雲端同步 (Ctrl+S)", self._sync_now
         )
 
         restore_menu = menu.addMenu(asset_icon("restore.svg"), "復原已刪除便箋")

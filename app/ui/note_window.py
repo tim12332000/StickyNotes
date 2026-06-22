@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPen,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QFrame,
@@ -154,6 +155,7 @@ class NoteWindow(QMainWindow):
         change_font: Callable[[str, int], None] | None = None,
         font_family: str = "",
         font_size: int = 11,
+        request_sync: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._note = note
@@ -162,6 +164,7 @@ class NoteWindow(QMainWindow):
         self._delete_note = delete_note
         self._save_window_state = save_window_state
         self._change_font = change_font or (lambda family, size: None)
+        self._request_sync = request_sync or (lambda: None)
         self._font_family = font_family
         self._font_size = font_size
         self._font_actions: dict[str, QAction] = {}
@@ -216,6 +219,11 @@ class NoteWindow(QMainWindow):
             self._ensure_visible_on_a_screen()
         self._apply_color(note.color)
         self.apply_font(self._font_family, self._font_size)
+
+        # Ctrl+S forces an immediate sync from any focused note.
+        sync_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Save), self)
+        sync_shortcut.activated.connect(self._request_sync)
+
         self._ready_to_save_state = True
 
     @property

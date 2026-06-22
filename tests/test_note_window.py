@@ -9,6 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QToolButton
 
 from app.config import MAX_FONT_SIZE, MIN_FONT_SIZE
@@ -229,6 +230,25 @@ def test_reload_keeps_view_when_content_is_unchanged(
     # Different content: the editor updates.
     window.reload(Note(content="changed"))
     assert window._editor.toPlainText() == "changed"
+    window.close()
+
+
+def test_ctrl_s_requests_an_immediate_sync(application: QApplication) -> None:
+    calls: list[bool] = []
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+        request_sync=lambda: calls.append(True),
+    )
+    save_sequence = QKeySequence(QKeySequence.StandardKey.Save)
+    shortcut = next(
+        s for s in window.findChildren(QShortcut) if s.key() == save_sequence
+    )
+    shortcut.activated.emit()
+    assert calls == [True]
     window.close()
 
 
