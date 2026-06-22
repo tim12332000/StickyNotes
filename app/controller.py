@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from app.models.note import Note
+from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
 from app.storage.note_repository import NoteRepository
 from app.ui.note_window import NoteWindow
@@ -28,8 +28,30 @@ class StickyNotesController:
         for note in notes:
             self._open_note(note)
 
-    def create_note(self) -> None:
-        self._open_note(self._repository.create_note())
+    def create_note(self, source_note_id: UUID | None = None) -> None:
+        note = self._repository.create_note()
+        source_window = self._windows.get(source_note_id) if source_note_id else None
+        if source_window is not None:
+            source_geometry = source_window.geometry()
+            screen = QGuiApplication.screenAt(source_geometry.center())
+            if screen is not None:
+                available = screen.availableGeometry()
+                x = source_geometry.x() + 30
+                y = source_geometry.y() + 30
+                if x + source_geometry.width() > available.right() + 1:
+                    x = available.left() + 30
+                if y + source_geometry.height() > available.bottom() + 1:
+                    y = available.top() + 30
+                self._repository.save_window_state(
+                    note.note_id,
+                    NoteWindowState(
+                        x=x,
+                        y=y,
+                        width=source_geometry.width(),
+                        height=source_geometry.height(),
+                    ),
+                )
+        self._open_note(note)
 
     def show_all_notes(self) -> None:
         for window in self._windows.values():
@@ -44,7 +66,7 @@ class StickyNotesController:
         window = NoteWindow(
             note=note,
             save_note=self._repository.save_note,
-            create_note=self.create_note,
+            create_note=lambda source_id=note.note_id: self.create_note(source_id),
             delete_note=self._delete_note,
             save_window_state=self._repository.save_window_state,
             initial_state=self._repository.load_window_state(note.note_id),
@@ -82,7 +104,7 @@ class StickyNotesController:
         self._application.setQuitOnLastWindowClosed(False)
         tray_icon = QSystemTrayIcon(self._create_icon(), self._application)
         menu = QMenu()
-        menu.addAction("新增便箋", self.create_note)
+        menu.addAction("新增便箋", lambda: self.create_note())
         menu.addAction("顯示所有便箋", self.show_all_notes)
 
         restore_menu = menu.addMenu("復原已刪除便箋")

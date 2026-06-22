@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +10,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from app.controller import StickyNotesController
 from app.models.note import Note, NoteWindowState
+from app.storage.note_repository import NoteRepository
 from app.ui.note_window import NoteWindow
 
 
@@ -59,3 +62,26 @@ def test_color_change_is_saved(application: QApplication) -> None:
 
     assert note.color == "#c8e6c9"
     assert saved_colors[-1] == "#c8e6c9"
+
+
+def test_new_note_is_offset_from_source_window(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    source_note = repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    source_window = controller._windows[source_note.note_id]
+    source_window.setGeometry(50, 60, 300, 220)
+
+    controller.create_note(source_note.note_id)
+
+    new_note_id = next(
+        note_id for note_id in controller._windows if note_id != source_note.note_id
+    )
+    new_geometry = controller._windows[new_note_id].geometry()
+    assert new_geometry.x() == 80
+    assert new_geometry.y() == 90
+    assert new_geometry.size() == source_window.geometry().size()
+    for window in controller._windows.values():
+        window.hide()
