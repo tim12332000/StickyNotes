@@ -219,16 +219,32 @@ class NoteWindow(QMainWindow):
         self._spinner.stop()
 
     def reload(self, note: Note) -> None:
-        """Replace the editor's text and color from a note pulled by sync.
+        """Refresh the editor/color from a note pulled by sync.
 
-        Signals are blocked so refreshing does not look like a user edit and
-        re-trigger a save.
+        Only touches the editor when the text actually changed, and never while
+        an edit is still pending — otherwise a routine sync would reset the
+        scroll position to the top or clobber what is being typed. When it does
+        update, the scroll position and cursor are preserved.
         """
+        color_changed = note.color != self._note.color
+        content_changed = (
+            not self._save_timer.isActive()
+            and note.content != self._editor.toPlainText()
+        )
         self._note = note
-        self._editor.blockSignals(True)
-        self._editor.setPlainText(note.content)
-        self._editor.blockSignals(False)
-        self._apply_color(note.color)
+        if content_changed:
+            scrollbar = self._editor.verticalScrollBar()
+            scroll = scrollbar.value()
+            cursor_position = self._editor.textCursor().position()
+            self._editor.blockSignals(True)
+            self._editor.setPlainText(note.content)
+            self._editor.blockSignals(False)
+            cursor = self._editor.textCursor()
+            cursor.setPosition(min(cursor_position, len(note.content)))
+            self._editor.setTextCursor(cursor)
+            scrollbar.setValue(min(scroll, scrollbar.maximum()))
+        if color_changed:
+            self._apply_color(note.color)
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self.save_before_exit()

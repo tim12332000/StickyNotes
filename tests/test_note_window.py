@@ -199,6 +199,31 @@ def test_editing_arms_auto_sync_only_when_connected(
         window.hide()
 
 
+def test_reload_keeps_view_when_content_is_unchanged(
+    application: QApplication,
+) -> None:
+    window = NoteWindow(
+        note=Note(content="line1\nline2\nline3"),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+    )
+    cursor = window._editor.textCursor()
+    cursor.setPosition(5)
+    window._editor.setTextCursor(cursor)
+
+    # Same content: the editor (and cursor) must be left untouched, not reset.
+    window.reload(Note(content="line1\nline2\nline3"))
+    assert window._editor.textCursor().position() == 5
+    assert window._editor.toPlainText() == "line1\nline2\nline3"
+
+    # Different content: the editor updates.
+    window.reload(Note(content="changed"))
+    assert window._editor.toPlainText() == "changed"
+    window.close()
+
+
 def test_sync_indicator_starts_and_stops(application: QApplication) -> None:
     window = NoteWindow(
         note=Note(),
