@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -468,6 +469,15 @@ class NoteWindow(QMainWindow):
             action.setChecked(action_family == family)
 
     def _delete_current_note(self) -> None:
+        confirmed = QMessageBox.question(
+            self,
+            "刪除便箋",
+            "確定要刪除這張便箋嗎？\n(會移到回收區,可從系統匣選單復原)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
         self._flush_pending_save()
         self._delete_note(self._note.note_id)
 
