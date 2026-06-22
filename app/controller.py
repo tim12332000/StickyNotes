@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from uuid import UUID
 
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QGuiApplication
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
-from app.config import AUTO_SYNC_DELAY_MILLISECONDS, MAX_FONT_SIZE, MIN_FONT_SIZE
+from app.config import (
+    AUTO_SYNC_DELAY_MILLISECONDS,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    set_configured_data_directory,
+)
 from app.icons import asset_icon
 from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
@@ -19,6 +25,7 @@ from app.ui.note_window import (
     SYNC_SYNCING,
     NoteWindow,
 )
+from app.ui.settings_dialog import SettingsDialog
 
 
 class SyncWorker(QThread):
@@ -48,7 +55,6 @@ class StickyNotesController:
         self._tray_icon: QSystemTrayIcon | None = None
         self._restore_menu: QMenu | None = None
         self._sync_worker: SyncWorker | None = None
-        self._sync_silent = False
         self._sync_state = SYNC_IDLE
         self._state_before_sync = SYNC_IDLE
         self._auto_sync_timer = QTimer()
@@ -166,8 +172,6 @@ class StickyNotesController:
 
     def _start_sync(self, *, silent: bool) -> None:
         if self._sync_worker is not None and self._sync_worker.isRunning():
-            if not silent:
-                self._notify("雲端同步已在進行中…")
             return
         credentials_path = self._credentials_path()
         if not credentials_path.exists():
@@ -188,41 +192,22 @@ class StickyNotesController:
         backend = GoogleDriveBackend(credentials_path, self._token_path())
         engine = SyncEngine(self._repository, backend, self._sync_state_path())
         worker = SyncWorker(engine, self._application)
-        self._sync_silent = silent
         worker.finished_ok.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_error)
         self._sync_worker = worker
         self._state_before_sync = self._sync_state
         self._apply_sync_state(SYNC_SYNCING)
-        if not silent:
-            self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
         worker.start()
 
     def _on_sync_done(self, result: SyncResult) -> None:
+        # Feedback is the title-bar indicator only — no bottom-right toasts.
         self._apply_sync_state(SYNC_IDLE)
         self._refresh_after_sync()
-        if not self._sync_silent:
-            deleted = len(result.deleted_local) + len(result.deleted_remote)
-            summary = (
-                f"上傳 {len(result.uploaded)}、下載 {len(result.downloaded)}、"
-                f"刪除 {deleted}"
-            )
-            if result.conflicts:
-                summary += f"、衝突副本 {len(result.conflicts)}"
-            self._notify("雲端同步完成：" + summary)
-        elif result.conflicts:
-            self._notify(
-                f"雲端同步發現 {len(result.conflicts)} 筆衝突，已保留副本。"
-            )
         self._finish_sync()
 
     def _on_sync_error(self, message: str) -> None:
-        # Failure leaves things unsynced: restore the dot if there were pending
-        # changes, otherwise clear it (e.g. a startup sync that just couldn't connect).
+        # A failed sync just leaves the "unsynced" dot showing; no toast.
         self._apply_sync_state(self._state_before_sync)
-        # Manual syncs report failures; silent auto-syncs fail quietly (e.g. offline).
-        if not self._sync_silent:
-            self._notify("雲端同步失敗：" + message)
         self._finish_sync()
 
     def _finish_sync(self) -> None:
@@ -253,6 +238,65 @@ class StickyNotesController:
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self._repository.data_directory)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_directory = dialog.selected_directory.resolve()
+        if new_directory == self._repository.data_directory:
+            return
+        self._change_data_directory(new_directory, copy_existing=dialog.copy_existing)
+
+    def _change_data_directory(
+        self, new_directory: Path, *, copy_existing: bool
+    ) -> None:
+        old_directory = self._repository.data_directory
+        new_directory = Path(new_directory)
+        new_directory.mkdir(parents=True, exist_ok=True)
+        # Persist the current notes/state to the old location first.
+        self._save_all_notes()
+        if copy_existing:
+            self._copy_data(old_directory, new_directory)
+        set_configured_data_directory(new_directory)
+
+        # Switch to the new location and reload everything from it.
+        self._repository = NoteRepository(new_directory)
+        self._font_family, self._font_size = self._repository.load_font_settings()
+        self._apply_sync_state(SYNC_IDLE)
+        for window in list(self._windows.values()):
+            window.close()
+            window.deleteLater()
+        self._windows.clear()
+        notes = self._repository.load_notes()
+        if not notes:
+            notes.append(self._repository.create_note())
+        for note in notes:
+            self._open_note(note)
+        self._notify("存檔位置已變更：\n" + str(new_directory))
+
+    @staticmethod
+    def _copy_data(old_directory: Path, new_directory: Path) -> None:
+        if old_directory == new_directory or not old_directory.exists():
+            return
+        for sub_directory in ("notes", "trash"):
+            source = old_directory / sub_directory
+            if source.is_dir():
+                target = new_directory / sub_directory
+                target.mkdir(parents=True, exist_ok=True)
+                for item in source.iterdir():
+                    if item.is_file():
+                        shutil.copy2(item, target / item.name)
+        for name in (
+            "metadata.json",
+            "local-settings.json",
+            "sync-state.json",
+            "credentials.json",
+            "token.json",
+        ):
+            source = old_directory / name
+            if source.is_file():
+                shutil.copy2(source, new_directory / name)
 
     def _delete_note(self, note_id: UUID) -> None:
         window = self._windows.pop(note_id, None)
@@ -291,6 +335,7 @@ class StickyNotesController:
         menu.addAction(
             asset_icon("cloud.svg"), "雲端同步 (Ctrl+S)", self._sync_now
         )
+        menu.addAction(asset_icon("settings.svg"), "控制台…", self._open_settings)
 
         restore_menu = menu.addMenu(asset_icon("restore.svg"), "復原已刪除便箋")
         restore_menu.aboutToShow.connect(self._populate_restore_menu)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.config import get_data_directory
 from app.storage.note_repository import NoteRepository
 from app.sync import InMemoryBackend, SyncEngine, SyncResult
 
@@ -18,6 +19,11 @@ def _build(tmp_path: Path) -> tuple[NoteRepository, InMemoryBackend, SyncEngine]
 
 def _notes_by_id(repository: NoteRepository) -> dict[str, object]:
     return {str(note.note_id): note for note in repository.load_notes()}
+
+
+def test_env_var_overrides_data_directory(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STICKY_NOTES_DATA_DIR", str(tmp_path))
+    assert get_data_directory() == tmp_path.resolve()
 
 
 def test_new_local_note_is_uploaded(tmp_path: Path) -> None:

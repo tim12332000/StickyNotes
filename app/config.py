@@ -4,8 +4,13 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QSettings
+
 
 APPLICATION_NAME = "StickyNotes"
+SETTINGS_ORGANIZATION = "StickyNotes"
+SETTINGS_APPLICATION = "StickyNotes"
+DATA_DIRECTORY_SETTING_KEY = "data_directory"
 DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "STICKY_NOTES_DATA_DIR"
 AUTO_SAVE_DELAY_MILLISECONDS = 500
 # How long to wait after the last edit before auto-syncing to the cloud.
@@ -32,16 +37,38 @@ FONT_FAMILY_CHOICES = (
 )
 
 
+def _settings() -> QSettings:
+    return QSettings(SETTINGS_ORGANIZATION, SETTINGS_APPLICATION)
+
+
+def get_configured_data_directory() -> str | None:
+    """The data directory the user picked in the control panel, if any."""
+    value = _settings().value(DATA_DIRECTORY_SETTING_KEY)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def set_configured_data_directory(path: Path | str) -> None:
+    _settings().setValue(DATA_DIRECTORY_SETTING_KEY, str(path))
+
+
+def default_data_directory() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / APPLICATION_NAME / "data"
+    return Path.home() / f".{APPLICATION_NAME.lower()}" / "data"
+
+
 def get_data_directory() -> Path:
+    # Precedence: env var (dev/test override) > user setting > default location.
     configured_directory = os.environ.get(DATA_DIRECTORY_ENVIRONMENT_VARIABLE)
     if configured_directory:
         return Path(configured_directory).expanduser().resolve()
 
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / APPLICATION_NAME / "data"
+    user_choice = get_configured_data_directory()
+    if user_choice:
+        return Path(user_choice).expanduser().resolve()
 
-    return Path.home() / f".{APPLICATION_NAME.lower()}" / "data"
+    return default_data_directory()
 
 
 def get_credentials_path() -> Path:

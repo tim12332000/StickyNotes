@@ -170,6 +170,33 @@ def test_refresh_after_sync_reconciles_windows(
         open_window.hide()
 
 
+def test_change_data_directory_copies_notes_and_switches(
+    application: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_directory = tmp_path / "old"
+    new_directory = tmp_path / "new"
+    repository = NoteRepository(old_directory)
+    note = repository.create_note()
+    note.content = "carry me over"
+    repository.save_note(note)
+    controller = StickyNotesController(application, repository)
+    controller.start()
+
+    # Avoid touching the real registry during the test.
+    monkeypatch.setattr(
+        "app.controller.set_configured_data_directory", lambda path: None
+    )
+    controller._change_data_directory(new_directory, copy_existing=True)
+
+    assert controller._repository.data_directory == new_directory
+    assert (new_directory / "metadata.json").exists()
+    contents = [n.content for n in controller._repository.load_notes()]
+    assert "carry me over" in contents
+    assert note.note_id in controller._windows
+    for window in controller._windows.values():
+        window.hide()
+
+
 def test_startup_sync_is_skipped_without_a_token(
     application: QApplication, tmp_path: Path
 ) -> None:
