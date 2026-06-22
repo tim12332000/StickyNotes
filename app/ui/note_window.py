@@ -6,6 +6,7 @@ from uuid import UUID
 from PySide6.QtCore import QEvent, QPoint, QSize, QTimer, Qt
 from PySide6.QtGui import (
     QAction,
+    QBrush,
     QColor,
     QFont,
     QFontDatabase,
@@ -75,14 +76,20 @@ class DragHandle(QFrame):
         super().mouseReleaseEvent(event)
 
 
-class SyncSpinner(QWidget):
-    """A small rotating arc shown in the title bar while a sync is running."""
+SYNC_IDLE = "idle"
+SYNC_PENDING = "pending"
+SYNC_SYNCING = "syncing"
+
+
+class SyncIndicator(QWidget):
+    """Title-bar sync status: hidden when synced, a dot when there are unsynced
+    changes, and a rotating arc while a sync is running."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._state = SYNC_IDLE
         self._angle = 0
         self.setFixedSize(20, 20)
-        self.setToolTip("雲端同步中…")
         self._timer = QTimer(self)
         self._timer.setInterval(70)
         self._timer.timeout.connect(self._advance)
@@ -92,14 +99,25 @@ class SyncSpinner(QWidget):
     def is_spinning(self) -> bool:
         return self._timer.isActive()
 
-    def start(self) -> None:
-        if not self._timer.isActive():
-            self._timer.start()
-        self.show()
+    @property
+    def state(self) -> str:
+        return self._state
 
-    def stop(self) -> None:
-        self._timer.stop()
-        self.hide()
+    def set_state(self, state: str) -> None:
+        self._state = state
+        if state == SYNC_SYNCING:
+            self.setToolTip("雲端同步中…")
+            if not self._timer.isActive():
+                self._timer.start()
+            self.show()
+        elif state == SYNC_PENDING:
+            self.setToolTip("有未同步的變更")
+            self._timer.stop()
+            self.show()
+        else:
+            self._timer.stop()
+            self.hide()
+        self.update()
 
     def _advance(self) -> None:
         self._angle = (self._angle + 30) % 360
@@ -108,12 +126,18 @@ class SyncSpinner(QWidget):
     def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(41, 41, 36, 210))
-        pen.setWidth(2)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        # A 280° arc whose start angle advances each tick reads as a spinner.
-        painter.drawArc(self.rect().adjusted(3, 3, -3, -3), self._angle * 16, 280 * 16)
+        rect = self.rect().adjusted(3, 3, -3, -3)
+        if self._state == SYNC_SYNCING:
+            pen = QPen(QColor(41, 41, 36, 210))
+            pen.setWidth(2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            # A 280° arc whose start angle advances each tick reads as a spinner.
+            painter.drawArc(rect, self._angle * 16, 280 * 16)
+        elif self._state == SYNC_PENDING:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(230, 150, 40)))
+            painter.drawEllipse(self.rect().center(), 4, 4)
 
 
 class NoteWindow(QMainWindow):
@@ -212,11 +236,8 @@ class NoteWindow(QMainWindow):
         """Write any debounced edit to disk now (used before a sync run)."""
         self._flush_pending_save()
 
-    def start_sync_indicator(self) -> None:
-        self._spinner.start()
-
-    def stop_sync_indicator(self) -> None:
-        self._spinner.stop()
+    def set_sync_state(self, state: str) -> None:
+        self._sync_indicator.set_state(state)
 
     def reload(self, note: Note) -> None:
         """Refresh the editor/color from a note pulled by sync.
@@ -306,8 +327,8 @@ class NoteWindow(QMainWindow):
         )
 
         layout.addStretch(1)
-        self._spinner = SyncSpinner(header)
-        layout.addWidget(self._spinner)
+        self._sync_indicator = SyncIndicator(header)
+        layout.addWidget(self._sync_indicator)
         layout.addWidget(
             self._button(
                 "trash.svg", "刪除並移到回收區", self._delete_current_note

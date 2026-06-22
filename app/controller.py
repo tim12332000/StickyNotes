@@ -13,7 +13,12 @@ from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
 from app.storage.note_repository import NoteRepository
 from app.sync import SyncEngine, SyncResult
-from app.ui.note_window import NoteWindow
+from app.ui.note_window import (
+    SYNC_IDLE,
+    SYNC_PENDING,
+    SYNC_SYNCING,
+    NoteWindow,
+)
 
 
 class SyncWorker(QThread):
@@ -44,6 +49,8 @@ class StickyNotesController:
         self._restore_menu: QMenu | None = None
         self._sync_worker: SyncWorker | None = None
         self._sync_silent = False
+        self._sync_state = SYNC_IDLE
+        self._state_before_sync = SYNC_IDLE
         self._auto_sync_timer = QTimer()
         self._auto_sync_timer.setSingleShot(True)
         self._auto_sync_timer.setInterval(AUTO_SYNC_DELAY_MILLISECONDS)
@@ -109,6 +116,7 @@ class StickyNotesController:
             font_size=self._font_size,
         )
         self._windows[note.note_id] = window
+        window.set_sync_state(self._sync_state)
         window.show_and_activate()
 
     def _save_note(self, note: Note) -> None:
@@ -144,7 +152,13 @@ class StickyNotesController:
         # Only debounce a sync once the user has authorized; otherwise editing
         # would silently do nothing (and must never trigger an OAuth prompt).
         if self._token_path().exists():
+            self._apply_sync_state(SYNC_PENDING)
             self._auto_sync_timer.start()
+
+    def _apply_sync_state(self, state: str) -> None:
+        self._sync_state = state
+        for window in self._windows.values():
+            window.set_sync_state(state)
 
     def _sync_now(self) -> None:
         self._start_sync(silent=False)
@@ -177,19 +191,14 @@ class StickyNotesController:
         worker.finished_ok.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_error)
         self._sync_worker = worker
-        self._set_sync_indicator(True)
+        self._state_before_sync = self._sync_state
+        self._apply_sync_state(SYNC_SYNCING)
         if not silent:
             self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
         worker.start()
 
-    def _set_sync_indicator(self, active: bool) -> None:
-        for window in self._windows.values():
-            if active:
-                window.start_sync_indicator()
-            else:
-                window.stop_sync_indicator()
-
     def _on_sync_done(self, result: SyncResult) -> None:
+        self._apply_sync_state(SYNC_IDLE)
         self._refresh_after_sync()
         if not self._sync_silent:
             deleted = len(result.deleted_local) + len(result.deleted_remote)
@@ -207,13 +216,15 @@ class StickyNotesController:
         self._finish_sync()
 
     def _on_sync_error(self, message: str) -> None:
+        # Failure leaves things unsynced: restore the dot if there were pending
+        # changes, otherwise clear it (e.g. a startup sync that just couldn't connect).
+        self._apply_sync_state(self._state_before_sync)
         # Manual syncs report failures; silent auto-syncs fail quietly (e.g. offline).
         if not self._sync_silent:
             self._notify("雲端同步失敗：" + message)
         self._finish_sync()
 
     def _finish_sync(self) -> None:
-        self._set_sync_indicator(False)
         worker = self._sync_worker
         self._sync_worker = None
         if worker is not None:

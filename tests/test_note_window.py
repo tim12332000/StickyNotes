@@ -15,7 +15,12 @@ from app.config import MAX_FONT_SIZE, MIN_FONT_SIZE
 from app.controller import StickyNotesController
 from app.models.note import Note, NoteWindowState
 from app.storage.note_repository import NoteRepository
-from app.ui.note_window import NoteWindow
+from app.ui.note_window import (
+    SYNC_IDLE,
+    SYNC_PENDING,
+    SYNC_SYNCING,
+    NoteWindow,
+)
 
 
 @pytest.fixture(scope="module")
@@ -189,10 +194,13 @@ def test_editing_arms_auto_sync_only_when_connected(
     controller._save_note(note)
     assert not controller._auto_sync_timer.isActive()
 
-    # After authorization (token present): saving arms a debounced sync.
+    # After authorization (token present): saving arms a debounced sync and
+    # marks the unsynced state.
     (tmp_path / "token.json").write_text("{}", encoding="utf-8")
     controller._save_note(note)
     assert controller._auto_sync_timer.isActive()
+    assert controller._sync_state == SYNC_PENDING
+    assert controller._windows[note.note_id]._sync_indicator.state == SYNC_PENDING
 
     controller._auto_sync_timer.stop()
     for window in controller._windows.values():
@@ -224,7 +232,7 @@ def test_reload_keeps_view_when_content_is_unchanged(
     window.close()
 
 
-def test_sync_indicator_starts_and_stops(application: QApplication) -> None:
+def test_sync_indicator_reflects_state(application: QApplication) -> None:
     window = NoteWindow(
         note=Note(),
         save_note=lambda saved_note: None,
@@ -232,11 +240,18 @@ def test_sync_indicator_starts_and_stops(application: QApplication) -> None:
         delete_note=lambda note_id: None,
         save_window_state=lambda note_id, state: None,
     )
-    assert not window._spinner.is_spinning
-    window.start_sync_indicator()
-    assert window._spinner.is_spinning
-    window.stop_sync_indicator()
-    assert not window._spinner.is_spinning
+    assert window._sync_indicator.state == SYNC_IDLE
+    assert not window._sync_indicator.is_spinning
+
+    window.set_sync_state(SYNC_SYNCING)
+    assert window._sync_indicator.is_spinning  # animated arc
+
+    window.set_sync_state(SYNC_PENDING)
+    assert window._sync_indicator.state == SYNC_PENDING
+    assert not window._sync_indicator.is_spinning  # a static dot, not animated
+
+    window.set_sync_state(SYNC_IDLE)
+    assert not window._sync_indicator.is_spinning
     window.close()
 
 
