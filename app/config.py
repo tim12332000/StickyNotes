@@ -71,29 +71,6 @@ def get_data_directory() -> Path:
     return default_data_directory()
 
 
-def get_credentials_path() -> Path:
-    """Locate the Google OAuth client file.
-
-    Preference: a copy beside the notes data (works for the packaged exe), then
-    the project root (convenient when running from source).
-    """
-    in_data_dir = get_data_directory() / "credentials.json"
-    if in_data_dir.exists():
-        return in_data_dir
-    in_cwd = Path("credentials.json").resolve()
-    if in_cwd.exists():
-        return in_cwd
-    return in_data_dir
-
-
-def get_token_path() -> Path:
-    return get_data_directory() / "token.json"
-
-
-def get_sync_state_path() -> Path:
-    return get_data_directory() / "sync-state.json"
-
-
 def get_asset_path(name: str) -> Path:
     bundle_root = getattr(sys, "_MEIPASS", None)
     if bundle_root:
