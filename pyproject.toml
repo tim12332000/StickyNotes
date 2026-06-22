@@ -17,6 +17,11 @@ dev = [
     "PyInstaller>=6,<7",
     "pytest>=8,<9",
 ]
+# Required only once the real Google Drive backend is wired up (phase two).
+drive = [
+    "google-api-python-client>=2,<3",
+    "google-auth-oauthlib>=1,<2",
+]
 
 [project.scripts]
 sticky-notes = "app.main:main"

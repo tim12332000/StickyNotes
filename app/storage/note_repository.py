@@ -57,9 +57,12 @@ class NoteRepository:
 
         return notes
 
-    def save_note(self, note: Note) -> None:
+    def save_note(self, note: Note, *, touch: bool = True) -> None:
+        # touch=False preserves note.updated_at, which sync needs when writing a
+        # note pulled from the cloud so its timestamp is not bumped to "now".
         destination = self._get_note_path(note.note_id)
-        note.updated_at = utc_now_isoformat()
+        if touch:
+            note.updated_at = utc_now_isoformat()
         self._atomic_write_text(destination, note.content)
 
         metadata = self._load_json(self._metadata_path)

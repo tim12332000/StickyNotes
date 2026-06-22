@@ -2,15 +2,42 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from app.config import MAX_FONT_SIZE, MIN_FONT_SIZE
+from app.config import (
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    get_credentials_path,
+    get_sync_state_path,
+    get_token_path,
+)
 from app.icons import asset_icon
 from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
 from app.storage.note_repository import NoteRepository
+from app.sync import SyncEngine, SyncResult
 from app.ui.note_window import NoteWindow
+
+
+class SyncWorker(QThread):
+    """Runs a sync (including the first-time OAuth browser flow) off the UI thread."""
+
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, engine: SyncEngine, parent: object | None = None) -> None:
+        super().__init__(parent)
+        self._engine = engine
+
+    def run(self) -> None:
+        try:
+            result = self._engine.sync()
+        except Exception as exc:  # surface any backend/network/auth error to the UI
+            self.failed.emit(str(exc))
+        else:
+            self.finished_ok.emit(result)
 
 
 class StickyNotesController:
@@ -20,6 +47,7 @@ class StickyNotesController:
         self._windows: dict[UUID, NoteWindow] = {}
         self._tray_icon: QSystemTrayIcon | None = None
         self._restore_menu: QMenu | None = None
+        self._sync_worker: SyncWorker | None = None
         self._font_family, self._font_size = repository.load_font_settings()
         self._application.aboutToQuit.connect(self._save_all_notes)
 
@@ -90,6 +118,75 @@ class StickyNotesController:
         for window in self._windows.values():
             window.apply_font(family, size)
 
+    def _sync_now(self) -> None:
+        if self._sync_worker is not None and self._sync_worker.isRunning():
+            self._notify("雲端同步已在進行中…")
+            return
+        credentials_path = get_credentials_path()
+        if not credentials_path.exists():
+            self._notify(
+                "找不到 credentials.json，請放到：\n" + str(credentials_path.parent)
+            )
+            return
+        # Make sure debounced edits are on disk so the sync sees the latest text.
+        for window in self._windows.values():
+            window.flush_pending_content()
+
+        from app.sync import GoogleDriveBackend
+
+        backend = GoogleDriveBackend(credentials_path, get_token_path())
+        engine = SyncEngine(self._repository, backend, get_sync_state_path())
+        worker = SyncWorker(engine, self._application)
+        worker.finished_ok.connect(self._on_sync_done)
+        worker.failed.connect(self._on_sync_error)
+        self._sync_worker = worker
+        self._notify("雲端同步中…（首次使用會開啟瀏覽器授權）")
+        worker.start()
+
+    def _on_sync_done(self, result: SyncResult) -> None:
+        self._refresh_after_sync()
+        deleted = len(result.deleted_local) + len(result.deleted_remote)
+        summary = (
+            f"上傳 {len(result.uploaded)}、下載 {len(result.downloaded)}、刪除 {deleted}"
+        )
+        if result.conflicts:
+            summary += f"、衝突副本 {len(result.conflicts)}"
+        self._notify("雲端同步完成：" + summary)
+        self._finish_sync()
+
+    def _on_sync_error(self, message: str) -> None:
+        self._notify("雲端同步失敗：" + message)
+        self._finish_sync()
+
+    def _finish_sync(self) -> None:
+        worker = self._sync_worker
+        self._sync_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _refresh_after_sync(self) -> None:
+        notes = {note.note_id: note for note in self._repository.load_notes()}
+        for note_id in list(self._windows):
+            if note_id not in notes:
+                window = self._windows.pop(note_id)
+                window.close()
+                window.deleteLater()
+        for note_id, note in notes.items():
+            window = self._windows.get(note_id)
+            if window is None:
+                self._open_note(note)
+            else:
+                window.reload(note)
+
+    def _notify(self, message: str) -> None:
+        if self._tray_icon is not None:
+            self._tray_icon.showMessage(
+                "Sticky Notes",
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
+
     def _delete_note(self, note_id: UUID) -> None:
         window = self._windows.pop(note_id, None)
         if window is not None:
@@ -122,6 +219,9 @@ class StickyNotesController:
         menu = QMenu()
         menu.addAction(asset_icon("add.svg"), "新增便箋", lambda: self.create_note())
         menu.addAction(asset_icon("show.svg"), "顯示所有便箋", self.show_all_notes)
+        menu.addAction(
+            asset_icon("cloud.svg"), "雲端同步 (Google Drive)", self._sync_now
+        )
 
         restore_menu = menu.addMenu(asset_icon("restore.svg"), "復原已刪除便箋")
         restore_menu.aboutToShow.connect(self._populate_restore_menu)

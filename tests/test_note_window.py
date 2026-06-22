@@ -134,6 +134,36 @@ def test_add_button_offsets_from_source_window(
         window.hide()
 
 
+def test_refresh_after_sync_reconciles_windows(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+
+    # A note that sync downloaded (written straight into the repository).
+    downloaded = Note(content="from cloud")
+    repository.save_note(downloaded)
+    controller._refresh_after_sync()
+    assert downloaded.note_id in controller._windows
+    window = controller._windows[downloaded.note_id]
+    assert window._editor.toPlainText() == "from cloud"
+
+    # A remote edit to an already-open note is reloaded into its window.
+    downloaded.content = "edited in cloud"
+    repository.save_note(downloaded)
+    controller._refresh_after_sync()
+    assert window._editor.toPlainText() == "edited in cloud"
+
+    # A remote deletion closes the window.
+    repository.delete_note(downloaded.note_id)
+    controller._refresh_after_sync()
+    assert downloaded.note_id not in controller._windows
+    for open_window in controller._windows.values():
+        open_window.hide()
+
+
 def test_color_is_applied_only_to_the_header(application: QApplication) -> None:
     window = NoteWindow(
         note=Note(color="#b3e5fc"),

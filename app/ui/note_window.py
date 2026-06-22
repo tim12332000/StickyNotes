@@ -165,6 +165,22 @@ class NoteWindow(QMainWindow):
         self._flush_pending_save()
         self._save_current_window_state()
 
+    def flush_pending_content(self) -> None:
+        """Write any debounced edit to disk now (used before a sync run)."""
+        self._flush_pending_save()
+
+    def reload(self, note: Note) -> None:
+        """Replace the editor's text and color from a note pulled by sync.
+
+        Signals are blocked so refreshing does not look like a user edit and
+        re-trigger a save.
+        """
+        self._note = note
+        self._editor.blockSignals(True)
+        self._editor.setPlainText(note.content)
+        self._editor.blockSignals(False)
+        self._apply_color(note.color)
+
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self.save_before_exit()
         super().closeEvent(event)

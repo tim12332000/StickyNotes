@@ -1,12 +1,34 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+datas = [("app/assets", "app/assets")]
+binaries = []
+hiddenimports = []
+
+# Bundle the Google Drive client stack so cloud sync works in the packaged exe.
+for _package in (
+    "googleapiclient",
+    "google_auth_oauthlib",
+    "google.auth",
+    "google.oauth2",
+    "google_auth_httplib2",
+    "httplib2",
+    "oauthlib",
+    "requests_oauthlib",
+    "uritemplate",
+):
+    _datas, _binaries, _hiddenimports = collect_all(_package)
+    datas += _datas
+    binaries += _binaries
+    hiddenimports += _hiddenimports
 
 a = Analysis(
     ["app/main.py"],
     pathex=["."],
-    binaries=[],
-    datas=[("app/assets", "app/assets")],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
