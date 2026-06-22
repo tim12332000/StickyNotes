@@ -11,6 +11,24 @@ AUTO_SAVE_DELAY_MILLISECONDS = 500
 DEFAULT_WINDOW_WIDTH = 320
 DEFAULT_WINDOW_HEIGHT = 320
 
+DEFAULT_FONT_FAMILY = "Microsoft JhengHei"
+DEFAULT_FONT_SIZE = 11
+MIN_FONT_SIZE = 8
+MAX_FONT_SIZE = 48
+# Curated families offered in the font menu; only the ones actually installed
+# are shown. The note's current family is always included as a fallback.
+FONT_FAMILY_CHOICES = (
+    "Microsoft JhengHei",
+    "Microsoft YaHei",
+    "PMingLiU",
+    "DFKai-SB",
+    "Segoe UI",
+    "Arial",
+    "Times New Roman",
+    "Consolas",
+    "Courier New",
+)
+
 
 def get_data_directory() -> Path:
     configured_directory = os.environ.get(DATA_DIRECTORY_ENVIRONMENT_VARIABLE)

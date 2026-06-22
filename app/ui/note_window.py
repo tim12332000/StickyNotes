@@ -4,7 +4,15 @@ from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtCore import QEvent, QPoint, QSize, QTimer, Qt
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QMouseEvent
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFont,
+    QFontDatabase,
+    QGuiApplication,
+    QKeySequence,
+    QMouseEvent,
+)
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -20,6 +28,9 @@ from app.config import (
     AUTO_SAVE_DELAY_MILLISECONDS,
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
+    FONT_FAMILY_CHOICES,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
 )
 from app.icons import asset_icon, color_swatch_icon
 from app.models.note import Note, NoteWindowState
@@ -73,6 +84,9 @@ class NoteWindow(QMainWindow):
         delete_note: Callable[[UUID], None],
         save_window_state: Callable[[UUID, NoteWindowState], None],
         initial_state: NoteWindowState | None = None,
+        change_font: Callable[[str, int], None] | None = None,
+        font_family: str = "",
+        font_size: int = 11,
     ) -> None:
         super().__init__()
         self._note = note
@@ -80,6 +94,10 @@ class NoteWindow(QMainWindow):
         self._create_note = create_note
         self._delete_note = delete_note
         self._save_window_state = save_window_state
+        self._change_font = change_font or (lambda family, size: None)
+        self._font_family = font_family
+        self._font_size = font_size
+        self._font_actions: dict[str, QAction] = {}
         self._ready_to_save_state = False
         self._collapsed = False
         self._expanded_height = DEFAULT_WINDOW_HEIGHT
@@ -90,7 +108,7 @@ class NoteWindow(QMainWindow):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setMinimumSize(220, 160)
+        self.setMinimumSize(300, 160)
 
         self._editor = QPlainTextEdit(note.content)
         self._editor.setPlaceholderText("輸入便箋內容…")
@@ -130,6 +148,7 @@ class NoteWindow(QMainWindow):
             )
             self._ensure_visible_on_a_screen()
         self._apply_color(note.color)
+        self.apply_font(self._font_family, self._font_size)
         self._ready_to_save_state = True
 
     @property
@@ -186,6 +205,24 @@ class NoteWindow(QMainWindow):
         color_button.setMenu(color_menu)
         color_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         layout.addWidget(color_button)
+
+        layout.addWidget(self._create_font_button())
+        layout.addWidget(
+            self._button(
+                "font-decrease.svg",
+                "縮小字體 (Ctrl+-)",
+                self._decrease_font_size,
+                QKeySequence.StandardKey.ZoomOut,
+            )
+        )
+        layout.addWidget(
+            self._button(
+                "font-increase.svg",
+                "放大字體 (Ctrl++)",
+                self._increase_font_size,
+                QKeySequence.StandardKey.ZoomIn,
+            )
+        )
 
         layout.addStretch(1)
         layout.addWidget(
@@ -255,16 +292,68 @@ class NoteWindow(QMainWindow):
         # dark surface with light text regardless of the selected color.
         border = QColor(color).darker(130).name()
         self.centralWidget().setStyleSheet(
-            f"#noteBody {{ background: #1e1e1e; border: 1px solid {border}; }}"
+            f"#noteBody {{ background: #333333; border: 1px solid {border}; }}"
             f"#noteHeader {{ background: {color}; }}"
-            "QPlainTextEdit { background: #1e1e1e; color: #f5f5f5; border: 0;"
+            "QPlainTextEdit { background: #333333; color: #f5f5f5; border: 0;"
             " padding: 8px; selection-background-color: #2f6fb0;"
             " selection-color: #ffffff; }"
             "QToolButton { background: transparent; border: 0; border-radius: 5px; }"
             "QToolButton:hover { background: rgba(0, 0, 0, 40); }"
             "QToolButton:pressed { background: rgba(0, 0, 0, 70); }"
             "#closeButton:hover { background: rgba(190, 45, 45, 160); }"
+            "QScrollBar:vertical { background: transparent; width: 12px; margin: 2px; }"
+            "QScrollBar::handle:vertical { background: rgba(255, 255, 255, 55);"
+            " border-radius: 4px; min-height: 30px; }"
+            "QScrollBar::handle:vertical:hover { background: rgba(255, 255, 255, 110); }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical"
+            " { background: transparent; }"
+            "QScrollBar:horizontal { background: transparent; height: 12px; margin: 2px; }"
+            "QScrollBar::handle:horizontal { background: rgba(255, 255, 255, 55);"
+            " border-radius: 4px; min-width: 30px; }"
+            "QScrollBar::handle:horizontal:hover { background: rgba(255, 255, 255, 110); }"
+            "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+            "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal"
+            " { background: transparent; }"
         )
+
+    def _create_font_button(self) -> QToolButton:
+        button = self._button("font.svg", "字型")
+        menu = QMenu(button)
+        installed = set(QFontDatabase.families())
+        families = list(FONT_FAMILY_CHOICES)
+        if self._font_family and self._font_family not in families:
+            families.insert(0, self._font_family)
+        for family in families:
+            if family not in installed and family != self._font_family:
+                continue
+            action = QAction(family, menu)
+            action.setData(family)
+            action.setCheckable(True)
+            action.setChecked(family == self._font_family)
+            action.triggered.connect(
+                lambda checked=False, selected=family: self._change_font(
+                    selected, self._font_size
+                )
+            )
+            menu.addAction(action)
+            self._font_actions[family] = action
+        button.setMenu(menu)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        return button
+
+    def _increase_font_size(self) -> None:
+        self._change_font(self._font_family, self._font_size + 1)
+
+    def _decrease_font_size(self) -> None:
+        self._change_font(self._font_family, self._font_size - 1)
+
+    def apply_font(self, family: str, size: int) -> None:
+        self._font_family = family
+        self._font_size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size))
+        self._editor.setFont(QFont(family, self._font_size))
+        for action_family, action in self._font_actions.items():
+            action.setChecked(action_family == family)
 
     def _delete_current_note(self) -> None:
         self._flush_pending_save()

@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication, QToolButton
 
+from app.config import MAX_FONT_SIZE, MIN_FONT_SIZE
 from app.controller import StickyNotesController
 from app.models.note import Note, NoteWindowState
 from app.storage.note_repository import NoteRepository
@@ -76,7 +77,7 @@ def test_header_uses_accessible_icon_buttons(application: QApplication) -> None:
 
     buttons = window.findChildren(QToolButton)
 
-    assert len(buttons) == 6
+    assert len(buttons) == 9
     assert all(button.text() == "" for button in buttons)
     assert all(not button.icon().isNull() for button in buttons)
     assert all(button.accessibleName() for button in buttons)
@@ -147,8 +148,11 @@ def test_color_is_applied_only_to_the_header(application: QApplication) -> None:
     # The chosen color paints the title bar only; the body stays a fixed dark
     # surface and the editor keeps light text — independent of the color.
     assert "#noteHeader { background: #b3e5fc; }" in style
-    assert "#noteBody { background: #1e1e1e;" in style
-    assert "QPlainTextEdit { background: #1e1e1e; color: #f5f5f5;" in style
+    assert "#noteBody { background: #333333;" in style
+    assert "QPlainTextEdit { background: #333333; color: #f5f5f5;" in style
+    # The scrollbar is restyled to match the dark body instead of the chunky
+    # native one.
+    assert "QScrollBar::handle:vertical" in style
     window.close()
 
 
@@ -201,6 +205,66 @@ def test_collapsed_window_persists_expanded_height(
 
     assert saved_states[-1].height == expanded_height
     window.close()
+
+
+def test_apply_font_updates_editor_and_menu_check(application: QApplication) -> None:
+    window = NoteWindow(
+        note=Note(),
+        save_note=lambda saved_note: None,
+        create_note=lambda: None,
+        delete_note=lambda note_id: None,
+        save_window_state=lambda note_id, state: None,
+        font_family="Arial",
+        font_size=11,
+    )
+
+    # The current family is always offered in the menu and starts checked.
+    assert window._font_actions["Arial"].isChecked()
+
+    window.apply_font("Arial", 18)
+    assert window._editor.font().family() == "Arial"
+    assert window._editor.font().pointSize() == 18
+
+    # Switching family drives the editor font and clears the old menu check.
+    window.apply_font("Times New Roman", 14)
+    assert window._editor.font().family() == "Times New Roman"
+    assert window._editor.font().pointSize() == 14
+    assert not window._font_actions["Arial"].isChecked()
+    window.close()
+
+
+def test_font_change_applies_to_all_notes_and_persists(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    controller.create_note()  # a second note picks up the current global font
+
+    controller._change_font("Consolas", 20)
+
+    for window in controller._windows.values():
+        assert window._editor.font().family() == "Consolas"
+        assert window._editor.font().pointSize() == 20
+    assert repository.load_font_settings() == ("Consolas", 20)
+    for window in controller._windows.values():
+        window.hide()
+
+
+def test_font_size_is_clamped(application: QApplication, tmp_path: Path) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+
+    controller._change_font("Arial", 9999)
+    assert repository.load_font_settings()[1] == MAX_FONT_SIZE
+
+    controller._change_font("Arial", 1)
+    assert repository.load_font_settings()[1] == MIN_FONT_SIZE
+    for window in controller._windows.values():
+        window.hide()
 
 
 def test_resize_cursor_matches_edges() -> None:

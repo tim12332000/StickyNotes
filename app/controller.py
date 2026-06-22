@@ -5,6 +5,7 @@ from uuid import UUID
 from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from app.config import MAX_FONT_SIZE, MIN_FONT_SIZE
 from app.icons import asset_icon
 from app.models.note import Note, NoteWindowState
 from app.startup import is_startup_enabled, set_startup_enabled
@@ -19,6 +20,7 @@ class StickyNotesController:
         self._windows: dict[UUID, NoteWindow] = {}
         self._tray_icon: QSystemTrayIcon | None = None
         self._restore_menu: QMenu | None = None
+        self._font_family, self._font_size = repository.load_font_settings()
         self._application.aboutToQuit.connect(self._save_all_notes)
 
     def start(self) -> None:
@@ -71,9 +73,22 @@ class StickyNotesController:
             delete_note=self._delete_note,
             save_window_state=self._repository.save_window_state,
             initial_state=self._repository.load_window_state(note.note_id),
+            change_font=self._change_font,
+            font_family=self._font_family,
+            font_size=self._font_size,
         )
         self._windows[note.note_id] = window
         window.show_and_activate()
+
+    def _change_font(self, family: str, size: int) -> None:
+        size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size))
+        if family == self._font_family and size == self._font_size:
+            return
+        self._font_family = family
+        self._font_size = size
+        self._repository.save_font_settings(family, size)
+        for window in self._windows.values():
+            window.apply_font(family, size)
 
     def _delete_note(self, note_id: UUID) -> None:
         window = self._windows.pop(note_id, None)

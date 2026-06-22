@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from app.config import (
+    DEFAULT_FONT_FAMILY,
+    DEFAULT_FONT_SIZE,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+)
 from app.models.note import (
     DEFAULT_NOTE_COLOR,
     DeletedNote,
@@ -150,6 +156,26 @@ class NoteRepository:
     def save_window_state(self, note_id: UUID, state: NoteWindowState) -> None:
         local_settings = self._load_json(self._local_settings_path)
         self._ensure_mapping(local_settings, "windows")[str(note_id)] = asdict(state)
+        self._save_json(self._local_settings_path, local_settings)
+
+    def load_font_settings(self) -> tuple[str, int]:
+        data = self._mapping_value(
+            self._load_json(self._local_settings_path), "font"
+        )
+        family = data.get("family")
+        if not isinstance(family, str) or not family:
+            family = DEFAULT_FONT_FAMILY
+        try:
+            size = int(data["size"])
+        except (KeyError, TypeError, ValueError):
+            size = DEFAULT_FONT_SIZE
+        size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size))
+        return family, size
+
+    def save_font_settings(self, family: str, size: int) -> None:
+        size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(size)))
+        local_settings = self._load_json(self._local_settings_path)
+        local_settings["font"] = {"family": family, "size": size}
         self._save_json(self._local_settings_path, local_settings)
 
     def _get_note_path(self, note_id: UUID) -> Path:
