@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtCore import QEvent, QPoint, QSize, QTimer, Qt
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QParallelAnimationGroup,
+    QPoint,
+    QPropertyAnimation,
+    QSize,
+    QTimer,
+    Qt,
+)
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -24,6 +35,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QSystemTrayIcon,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -81,11 +93,35 @@ class DragHandle(QFrame):
 SYNC_IDLE = "idle"
 SYNC_PENDING = "pending"
 SYNC_SYNCING = "syncing"
+SYNC_ERROR = "error"
+
+
+def system_animations_enabled() -> bool:
+    """Honor the OS "show animations"/"reduce motion" preference.
+
+    On Windows this reads SPI_GETCLIENTAREAANIMATION; anywhere else (or on any
+    failure) we assume animations are wanted. Lets users who disable motion
+    system-wide get instant transitions instead of forced fades/roll-ups.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+
+        enabled = ctypes.c_int(1)
+        SPI_GETCLIENTAREAANIMATION = 0x1042
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(enabled), 0
+        )
+        return bool(enabled.value) if ok else True
+    except Exception:
+        return True
 
 
 class SyncIndicator(QWidget):
-    """Title-bar sync status: hidden when synced, a dot when there are unsynced
-    changes, and a rotating arc while a sync is running."""
+    """Title-bar sync status: hidden when synced, an orange dot for unsynced
+    changes, a rotating arc while syncing, and a red dot if the last sync
+    failed (with the reason in its tooltip)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,7 +141,7 @@ class SyncIndicator(QWidget):
     def state(self) -> str:
         return self._state
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state: str, detail: str = "") -> None:
         self._state = state
         if state == SYNC_SYNCING:
             self.setToolTip("雲端同步中…")
@@ -114,6 +150,10 @@ class SyncIndicator(QWidget):
             self.show()
         elif state == SYNC_PENDING:
             self.setToolTip("有未同步的變更")
+            self._timer.stop()
+            self.show()
+        elif state == SYNC_ERROR:
+            self.setToolTip("雲端同步失敗：\n" + detail if detail else "雲端同步失敗")
             self._timer.stop()
             self.show()
         else:
@@ -140,10 +180,20 @@ class SyncIndicator(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor(230, 150, 40)))
             painter.drawEllipse(self.rect().center(), 4, 4)
+        elif self._state == SYNC_ERROR:
+            # A red dot, distinct from the orange "pending" dot, so a failed sync
+            # never looks the same as "changes not yet sent".
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(200, 55, 45)))
+            painter.drawEllipse(self.rect().center(), 4, 4)
 
 
 class NoteWindow(QMainWindow):
     RESIZE_MARGIN = 6
+    # Roll-up/roll-down and fade-in timings. Short enough to feel instant,
+    # long enough to read as motion rather than a snap.
+    COLLAPSE_DURATION_MS = 160
+    APPEAR_DURATION_MS = 140
 
     def __init__(
         self,
@@ -157,6 +207,7 @@ class NoteWindow(QMainWindow):
         font_family: str = "",
         font_size: int = 11,
         request_sync: Callable[[], None] | None = None,
+        notify_hidden: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._note = note
@@ -166,6 +217,7 @@ class NoteWindow(QMainWindow):
         self._save_window_state = save_window_state
         self._change_font = change_font or (lambda family, size: None)
         self._request_sync = request_sync or (lambda: None)
+        self._notify_hidden = notify_hidden or (lambda: None)
         self._font_family = font_family
         self._font_size = font_size
         self._font_actions: dict[str, QAction] = {}
@@ -173,6 +225,8 @@ class NoteWindow(QMainWindow):
         self._collapsed = False
         self._expanded_height = DEFAULT_WINDOW_HEIGHT
         self._expanded_min_height = 0
+        self._collapse_animation: QParallelAnimationGroup | None = None
+        self._has_appeared = False
 
         self.setWindowTitle("Sticky Notes")
         self.setWindowIcon(asset_icon("note.svg"))
@@ -184,6 +238,12 @@ class NoteWindow(QMainWindow):
         self._editor = QPlainTextEdit(note.content)
         self._editor.setPlaceholderText("輸入便箋內容…")
         self._editor.setFrameShape(QFrame.Shape.NoFrame)
+        # Let the editor shrink to nothing so the body can roll up smoothly during
+        # a collapse; the window's own minimum height governs the expanded floor.
+        self._editor.setMinimumHeight(0)
+        # Tab moves focus to the header buttons (and Shift+Tab back) instead of
+        # inserting a tab character, so the toolbar is reachable by keyboard.
+        self._editor.setTabChangesFocus(True)
         self._editor.textChanged.connect(self._schedule_save)
 
         self._save_timer = QTimer(self)
@@ -232,10 +292,29 @@ class NoteWindow(QMainWindow):
         return self._note.note_id
 
     def show_and_activate(self) -> None:
+        # Fade in the first time a note appears; later shows (e.g. "show all
+        # notes") just raise it instantly so repeated clicks don't flicker.
+        first_show = not self._has_appeared
+        self._has_appeared = True
+        self.setWindowOpacity(0.0 if first_show else 1.0)
         self.show()
         self.raise_()
         self.activateWindow()
         self._editor.setFocus()
+        if first_show:
+            self._fade_in()
+
+    def _fade_in(self) -> None:
+        if not system_animations_enabled():
+            self.setWindowOpacity(1.0)
+            return
+        animation = QPropertyAnimation(self, b"windowOpacity", self)
+        animation.setDuration(self.APPEAR_DURATION_MS)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._appear_animation = animation
+        animation.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def save_before_exit(self) -> None:
         self._flush_pending_save()
@@ -245,8 +324,8 @@ class NoteWindow(QMainWindow):
         """Write any debounced edit to disk now (used before a sync run)."""
         self._flush_pending_save()
 
-    def set_sync_state(self, state: str) -> None:
-        self._sync_indicator.set_state(state)
+    def set_sync_state(self, state: str, detail: str = "") -> None:
+        self._sync_indicator.set_state(state, detail)
 
     def reload(self, note: Note) -> None:
         """Refresh the editor/color from a note pulled by sync.
@@ -354,12 +433,19 @@ class NoteWindow(QMainWindow):
             self._button(
                 "close.svg",
                 "隱藏便箋 (Ctrl+W)",
-                self.close,
+                self._user_hide,
                 QKeySequence.StandardKey.Close,
                 "closeButton",
             )
         )
         return header
+
+    def _user_hide(self) -> None:
+        # The X / Ctrl+W hides the note to the tray rather than closing the app.
+        # Let the controller explain where it went (once), so it doesn't read as
+        # a crash or a lost note.
+        self._notify_hidden()
+        self.close()
 
     def _button(
         self,
@@ -377,6 +463,9 @@ class NoteWindow(QMainWindow):
         button.setToolTip(tooltip)
         button.setAccessibleName(tooltip.split(" (")[0])
         button.setAutoRaise(True)
+        # Reachable by keyboard: Tab lands on it, Space/Enter activates (and opens
+        # the color/font menus). Without this the whole header is mouse-only.
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         if shortcut is not None:
             button.setShortcut(QKeySequence(shortcut))
         if callback is not None:
@@ -469,10 +558,16 @@ class NoteWindow(QMainWindow):
             action.setChecked(action_family == family)
 
     def _delete_current_note(self) -> None:
+        # Only promise tray-based restore when a tray actually exists, so the
+        # dialog never points the user at a menu that isn't there.
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            detail = "\n(會移到回收區,可從系統匣選單復原)"
+        else:
+            detail = "\n(會移到回收區)"
         confirmed = QMessageBox.question(
             self,
             "刪除便箋",
-            "確定要刪除這張便箋嗎？\n(會移到回收區,可從系統匣選單復原)",
+            "確定要刪除這張便箋嗎？" + detail,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -483,26 +578,85 @@ class NoteWindow(QMainWindow):
 
     def _toggle_collapsed(self) -> None:
         # Roll the note up to just its title bar, or unroll it again. The window
-        # stays on screen; only the body is hidden.
-        maximum_height = 16777215  # QWIDGETSIZE_MAX
+        # stays on screen and anchored at its top-left; only the body height
+        # animates. The body is hidden once fully rolled up.
+        animating = self._collapse_running()
+        self._stop_collapse_animation()
+        start_height = self.height()
         if self._collapsed:
+            # ---- expand ----
             self._editor.show()
-            self.setMaximumHeight(maximum_height)
-            self.setMinimumHeight(self._expanded_min_height)
-            self.resize(self.width(), self._expanded_height)
             self._collapsed = False
             self._collapse_button.setIcon(asset_icon("collapse.svg"))
             self._collapse_button.setToolTip("收合")
+            self._animate_height(
+                start_height, self._expanded_height, self._finish_expand
+            )
         else:
-            self._expanded_height = self.height()
-            self._expanded_min_height = self.minimumHeight()
-            collapsed_height = self.height() - self._editor.height()
-            self._editor.hide()
-            self.setMinimumHeight(0)
-            self.setFixedHeight(collapsed_height)
+            # ---- collapse ----  (don't recapture the expanded size mid-flight)
+            if not animating:
+                self._expanded_height = start_height
+                self._expanded_min_height = self.minimumHeight()
             self._collapsed = True
             self._collapse_button.setIcon(asset_icon("expand.svg"))
             self._collapse_button.setToolTip("展開")
+            # Let the window shrink below its normal minimum while collapsed.
+            self.setMinimumHeight(0)
+            self._animate_height(
+                start_height, self._collapsed_height(), self._editor.hide
+            )
+
+    def _collapsed_height(self) -> int:
+        layout = self.centralWidget().layout()
+        margins = layout.contentsMargins()
+        return self._header.sizeHint().height() + margins.top() + margins.bottom()
+
+    def _animate_height(
+        self, start: int, end: int, on_finish: Callable[[], None]
+    ) -> None:
+        if not system_animations_enabled():
+            # Reduced-motion: jump straight to the end state, no animation.
+            self.setMinimumHeight(end)
+            self.setMaximumHeight(end)
+            on_finish()
+            return
+        # Driving both the min and max height in lockstep forces the frameless
+        # window to actually resize (it has no native frame to drag), giving a
+        # live roll-up/roll-down anchored at the top-left.
+        group = QParallelAnimationGroup(self)
+        for property_name in (b"minimumHeight", b"maximumHeight"):
+            animation = QPropertyAnimation(self, property_name, group)
+            animation.setDuration(self.COLLAPSE_DURATION_MS)
+            animation.setStartValue(start)
+            animation.setEndValue(end)
+            animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            group.addAnimation(animation)
+        group.finished.connect(on_finish)
+        self._collapse_animation = group
+        group.start()
+
+    def _finish_expand(self) -> None:
+        # Hand resizing back to the user once fully unrolled.
+        self.setMinimumHeight(self._expanded_min_height)
+        self.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+
+    def _collapse_running(self) -> bool:
+        animation = self._collapse_animation
+        return (
+            animation is not None
+            and animation.state() == QAbstractAnimation.State.Running
+        )
+
+    def _stop_collapse_animation(self) -> None:
+        animation = self._collapse_animation
+        self._collapse_animation = None
+        if animation is not None:
+            try:
+                animation.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            animation.stop()
+            animation.deleteLater()
 
     def _schedule_state_save(self) -> None:
         if self._ready_to_save_state:

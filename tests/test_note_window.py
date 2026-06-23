@@ -17,6 +17,7 @@ from app.controller import StickyNotesController
 from app.models.note import Note, NoteWindowState
 from app.storage.note_repository import NoteRepository
 from app.ui.note_window import (
+    SYNC_ERROR,
     SYNC_IDLE,
     SYNC_PENDING,
     SYNC_SYNCING,
@@ -28,6 +29,14 @@ from app.ui.note_window import (
 def application() -> Iterator[QApplication]:
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+def _finish_collapse_animation(window: NoteWindow, application: QApplication) -> None:
+    """Fast-forward the collapse/expand height animation to its end state."""
+    animation = window._collapse_animation
+    if animation is not None:
+        animation.setCurrentTime(animation.totalDuration())
+    application.processEvents()
 
 
 def test_close_flushes_pending_content_and_window_state(
@@ -297,6 +306,14 @@ def test_sync_indicator_reflects_state(application: QApplication) -> None:
     assert window._sync_indicator.state == SYNC_PENDING
     assert not window._sync_indicator.is_spinning  # a static dot, not animated
 
+    # A failed sync is a distinct, visible state that carries the reason — it must
+    # never look the same as "synced" (hidden) or "pending" (orange).
+    window.set_sync_state(SYNC_ERROR, "network down")
+    assert window._sync_indicator.state == SYNC_ERROR
+    assert not window._sync_indicator.is_spinning
+    assert not window._sync_indicator.isHidden()  # shown, unlike the idle state
+    assert "network down" in window._sync_indicator.toolTip()
+
     window.set_sync_state(SYNC_IDLE)
     assert not window._sync_indicator.is_spinning
     window.close()
@@ -341,12 +358,12 @@ def test_collapse_rolls_up_to_the_title_bar_and_back(
     assert window._editor.isVisible()
 
     window._toggle_collapsed()
-    application.processEvents()
+    _finish_collapse_animation(window, application)
     assert not window._editor.isVisible()
     assert window.height() < expanded_height
 
     window._toggle_collapsed()
-    application.processEvents()
+    _finish_collapse_animation(window, application)
     assert window._editor.isVisible()
     assert window.height() == expanded_height
     window.close()
@@ -369,6 +386,7 @@ def test_collapsed_window_persists_expanded_height(
     expanded_height = window.height()
 
     window._toggle_collapsed()
+    _finish_collapse_animation(window, application)
     window.save_before_exit()
 
     assert saved_states[-1].height == expanded_height
@@ -472,3 +490,106 @@ def test_window_borders_are_detected_as_resize_edges(
     center = window.mapToGlobal(QPoint(window.width() // 2, window.height() // 2))
     assert window._resize_edges_at(center) == Qt.Edge(0)
     window.close()
+
+
+def test_failed_sync_shows_error_state_not_synced(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    note = repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    indicator = controller._windows[note.note_id]._sync_indicator
+
+    # A sync the user asked for must always surface failure with the reason.
+    controller._last_sync_silent = False
+    controller._state_before_sync = SYNC_IDLE
+    controller._on_sync_error("network down")
+    assert controller._sync_state == SYNC_ERROR
+    assert indicator.state == SYNC_ERROR
+    assert "network down" in indicator.toolTip()
+
+    # A silent sync that fails WITH unsynced changes pending stays red — those
+    # edits are at risk and must never look "synced".
+    controller._last_sync_silent = True
+    controller._state_before_sync = SYNC_PENDING
+    controller._on_sync_error("still down")
+    assert controller._sync_state == SYNC_ERROR
+
+    # But a benign silent failure with nothing queued (e.g. offline at launch)
+    # stays quiet/hidden rather than alarming a red dot on every cold start.
+    controller._last_sync_silent = True
+    controller._state_before_sync = SYNC_IDLE
+    controller._on_sync_error("offline at launch")
+    assert controller._sync_state == SYNC_IDLE
+    for window in controller._windows.values():
+        window.hide()
+
+
+def test_note_created_during_sync_error_keeps_the_reason(
+    application: QApplication, tmp_path: Path
+) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+
+    controller._last_sync_silent = False
+    controller._on_sync_error("token expired")
+    controller.create_note()  # opened while still in the error state
+
+    for window in controller._windows.values():
+        assert window._sync_indicator.state == SYNC_ERROR
+        assert "token expired" in window._sync_indicator.toolTip()
+    for window in controller._windows.values():
+        window.hide()
+
+
+def test_manual_sync_failure_notifies_but_silent_sync_stays_quiet(
+    application: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    notices: list[str] = []
+    monkeypatch.setattr(controller, "_notify", lambda message: notices.append(message))
+
+    controller._last_sync_silent = False
+    controller._on_sync_error("auth expired")
+    assert any("auth expired" in message for message in notices)
+
+    notices.clear()
+    controller._last_sync_silent = True
+    controller._on_sync_error("offline")
+    assert notices == []  # background failures don't nag, but still show the dot
+    for window in controller._windows.values():
+        window.hide()
+
+
+def test_hide_hint_is_shown_at_most_once(
+    application: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Keep the one-shot flag in memory so the test never touches the real registry.
+    flags: dict[str, bool] = {}
+    monkeypatch.setattr(
+        "app.controller.get_bool_flag", lambda key: flags.get(key, False)
+    )
+    monkeypatch.setattr(
+        "app.controller.set_bool_flag",
+        lambda key, value: flags.__setitem__(key, value),
+    )
+    repository = NoteRepository(tmp_path)
+    repository.create_note()
+    controller = StickyNotesController(application, repository)
+    controller.start()
+    controller._tray_icon = object()  # pretend a system tray exists
+    notices: list[str] = []
+    monkeypatch.setattr(controller, "_notify", lambda message: notices.append(message))
+
+    controller._note_hidden()
+    controller._note_hidden()
+
+    assert len(notices) == 1
+    for window in controller._windows.values():
+        window.hide()

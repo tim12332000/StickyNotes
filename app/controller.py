@@ -12,7 +12,9 @@ from app.config import (
     AUTO_SYNC_DELAY_MILLISECONDS,
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
+    get_bool_flag,
     get_bundled_credentials_path,
+    set_bool_flag,
     set_configured_data_directory,
 )
 from app.icons import asset_icon
@@ -21,6 +23,7 @@ from app.startup import is_startup_enabled, set_startup_enabled
 from app.storage.note_repository import NoteRepository
 from app.sync import SyncEngine, SyncResult
 from app.ui.note_window import (
+    SYNC_ERROR,
     SYNC_IDLE,
     SYNC_PENDING,
     SYNC_SYNCING,
@@ -57,7 +60,9 @@ class StickyNotesController:
         self._restore_menu: QMenu | None = None
         self._sync_worker: SyncWorker | None = None
         self._sync_state = SYNC_IDLE
+        self._sync_detail = ""
         self._state_before_sync = SYNC_IDLE
+        self._last_sync_silent = True
         self._auto_sync_timer = QTimer()
         self._auto_sync_timer.setSingleShot(True)
         self._auto_sync_timer.setInterval(AUTO_SYNC_DELAY_MILLISECONDS)
@@ -122,9 +127,10 @@ class StickyNotesController:
             font_family=self._font_family,
             font_size=self._font_size,
             request_sync=self._sync_now,
+            notify_hidden=self._note_hidden,
         )
         self._windows[note.note_id] = window
-        window.set_sync_state(self._sync_state)
+        window.set_sync_state(self._sync_state, self._sync_detail)
         window.show_and_activate()
 
     def _save_note(self, note: Note) -> None:
@@ -166,10 +172,13 @@ class StickyNotesController:
             self._apply_sync_state(SYNC_PENDING)
             self._auto_sync_timer.start()
 
-    def _apply_sync_state(self, state: str) -> None:
+    def _apply_sync_state(self, state: str, detail: str = "") -> None:
+        # Remember the detail too, so a note opened later while still in this
+        # state (e.g. a new note created during a sync error) shows the reason.
         self._sync_state = state
+        self._sync_detail = detail
         for window in self._windows.values():
-            window.set_sync_state(state)
+            window.set_sync_state(state, detail)
 
     def _sync_now(self) -> None:
         self._start_sync(silent=False)
@@ -199,19 +208,34 @@ class StickyNotesController:
         worker.finished_ok.connect(self._on_sync_done)
         worker.failed.connect(self._on_sync_error)
         self._sync_worker = worker
+        self._last_sync_silent = silent
         self._state_before_sync = self._sync_state
         self._apply_sync_state(SYNC_SYNCING)
         worker.start()
 
     def _on_sync_done(self, result: SyncResult) -> None:
-        # Feedback is the title-bar indicator only — no bottom-right toasts.
+        # A successful sync gives no toast — the title-bar indicator clearing is
+        # enough. Only failures are surfaced (see _on_sync_error).
         self._apply_sync_state(SYNC_IDLE)
         self._refresh_after_sync()
         self._finish_sync()
 
     def _on_sync_error(self, message: str) -> None:
-        # A failed sync just leaves the "unsynced" dot showing; no toast.
-        self._apply_sync_state(self._state_before_sync)
+        # A failed sync must never look like "synced" WHEN there were unsynced
+        # changes (or the user asked for it): show a distinct red error state
+        # carrying the reason, and notify for a user-initiated sync.
+        #
+        # But a benign background failure with nothing queued — e.g. simply being
+        # offline at launch — should stay quiet: there are no local edits at
+        # risk, so reverting to the pre-sync state avoids alarming a red dot on
+        # every offline cold start.
+        had_unsynced_changes = self._state_before_sync in (SYNC_PENDING, SYNC_ERROR)
+        if not self._last_sync_silent or had_unsynced_changes:
+            self._apply_sync_state(SYNC_ERROR, detail=message)
+            if not self._last_sync_silent:
+                self._notify("雲端同步失敗：\n" + message)
+        else:
+            self._apply_sync_state(self._state_before_sync)
         self._finish_sync()
 
     def _finish_sync(self) -> None:
@@ -242,6 +266,14 @@ class StickyNotesController:
                 QSystemTrayIcon.MessageIcon.Information,
                 4000,
             )
+
+    def _note_hidden(self) -> None:
+        # When a note is hidden (X / Ctrl+W) it goes to the tray, not away.
+        # Explain that once, ever, so it never reads as a crash or a lost note.
+        if self._tray_icon is None or get_bool_flag("hide_hint_shown"):
+            return
+        set_bool_flag("hide_hint_shown", True)
+        self._notify("便箋已收到系統匣。雙擊系統匣圖示可重新開啟，右鍵有更多選項。")
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._repository.data_directory)

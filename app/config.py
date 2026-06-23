@@ -51,6 +51,15 @@ def set_configured_data_directory(path: Path | str) -> None:
     _settings().setValue(DATA_DIRECTORY_SETTING_KEY, str(path))
 
 
+def get_bool_flag(key: str) -> bool:
+    """A persisted one-shot/preference flag (e.g. 'have we shown this hint?')."""
+    return _settings().value(key, False, type=bool)
+
+
+def set_bool_flag(key: str, value: bool) -> None:
+    _settings().setValue(key, value)
+
+
 def default_data_directory() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:

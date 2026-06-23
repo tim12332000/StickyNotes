@@ -26,7 +26,7 @@ No-install single-file executable: **[Download StickyNotes.exe](https://github.c
 
 - Manual sync: the tray "Cloud sync" entry, or **Ctrl+S** on a note.
 - Auto sync: once on startup, then ~8 s after an edit/create/delete (only when already authorized — it never pops an auth prompt on its own).
-- A title-bar indicator shows status: 🟠 unsynced changes / (spinner) syncing / hidden when in sync.
+- A title-bar indicator shows status: 🟠 unsynced changes / (spinner) syncing / 🔴 sync failed (hover for the reason) / hidden when in sync. A failed manual sync also shows a tray notification; success stays quiet.
 - Two-way: additions/edits on either side propagate, simultaneous edits keep a **conflict copy** (never a silent overwrite), and deletions propagate both ways.
 - Uses the `drive.file` scope (only files the app itself created); each note is a `.txt`, with color/timestamps stored in Drive `appProperties`.
 
