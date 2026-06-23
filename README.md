@@ -1,5 +1,7 @@
 # Sticky Notes
 
+[English](README.en.md) · 繁體中文
+
 Windows 桌面便箋工具,風格類似 Microsoft Sticky Notes。便箋內容以 TXT 明文保存在本機,可離線使用,並可選擇透過 **Google Drive API** 在多台裝置之間同步(不依賴 Google Drive 電腦版)。
 
 ## 功能

@@ -1,0 +1,116 @@
+<!-- Blogger 用:切到「HTML 檢視」整段貼上即可。標題可放到 Blogger 的標題欄,內文從下方開始。 -->
+
+<p>Windows 內建的便利貼很堪用,但有幾件事一直讓我不太順手:想換字型不行、想自己挑底色不行、跨電腦同步要綁微軟帳號……於是我乾脆自己做了一個。</p>
+
+<p>這篇紀錄一下這個小工具:它能做什麼、去哪拿、怎麼用。</p>
+
+<blockquote>
+  <p>專案位置(原始碼):<a href="https://github.com/tim12332000/StickyNotes" target="_blank" rel="noopener"><strong>https://github.com/tim12332000/StickyNotes</strong></a></p>
+</blockquote>
+
+<h2>它長什麼樣、能做什麼</h2>
+
+<p>一句話:<strong>像 Windows 便利貼,但更可自訂,而且能用 Google Drive 在多台電腦之間同步。</strong></p>
+
+<ul>
+  <li>無邊框、永遠置頂的小視窗;拖曳標題列移動,<strong>四邊/四角都能像一般視窗縮放</strong>。</li>
+  <li>多張獨立便利貼,沒有便利貼時自動幫你開一張。</li>
+  <li><strong>標題列可換色</strong>(黃/粉紅/藍/綠/紫/白),內文固定深色底 + 白字,看起來清爽。</li>
+  <li><strong>字型可選、字級可調</strong>(A− / A+,或 Ctrl+− / Ctrl+=)。</li>
+  <li>一鍵<strong>收合</strong>成只剩標題列、或<strong>最小化</strong>到工作列。</li>
+  <li>編輯停 0.5 秒就<strong>自動存檔</strong>;視窗位置/大小會記住。</li>
+  <li>刪除會先進<strong>回收區</strong>,可從系統匣選單復原(而且<strong>刪除前會先問你一次</strong>)。</li>
+  <li>系統匣常駐,可設定<strong>開機自動啟動</strong>。</li>
+  <li><strong>Google Drive 雲端同步</strong>:多台電腦共用同一份便利貼。</li>
+</ul>
+
+<h2>怎麼開始用</h2>
+
+<h3>方式一:直接用(最簡單)</h3>
+
+<p>下載打包好的 <strong><code>StickyNotes.exe</code></strong>(單一檔、免安裝),雙擊就能跑,不需要先裝 Python。</p>
+
+<ul>
+  <li>從專案的 <strong>Releases</strong> 頁面下載,或自己打包(見方式二)。</li>
+  <li>第一次啟動會自動出現一張便利貼,圖示會待在右下角系統匣。</li>
+</ul>
+
+<h3>方式二:從原始碼跑(開發者)</h3>
+
+<p>需要 Python 3.12 以上:</p>
+
+<pre style="background:#1e1e1e;color:#f5f5f5;padding:14px;border-radius:6px;overflow:auto;font-size:14px;line-height:1.5;"><code>git clone https://github.com/tim12332000/StickyNotes.git
+cd StickyNotes
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev,drive]"
+python -m app.main</code></pre>
+
+<p>自己打包成單一 exe:</p>
+
+<pre style="background:#1e1e1e;color:#f5f5f5;padding:14px;border-radius:6px;overflow:auto;font-size:14px;line-height:1.5;"><code>.\.venv\Scripts\python.exe -m PyInstaller sticky-notes-onefile.spec --distpath dist/onefile --noconfirm</code></pre>
+
+<p>完成後 <code>dist\onefile\StickyNotes.exe</code> 就是免安裝的單一檔。</p>
+
+<h2>操作與快捷鍵</h2>
+
+<p>便利貼標題列上的按鈕(由左到右):<strong>新增</strong>、<strong>換色</strong>、<strong>字型</strong>、<strong>縮小字</strong>、<strong>放大字</strong> … <strong>刪除</strong>、<strong>收合</strong>、<strong>最小化</strong>、<strong>隱藏</strong>。</p>
+
+<table style="border-collapse:collapse;">
+  <thead>
+    <tr>
+      <th style="border:1px solid #ccc;padding:6px 12px;text-align:left;">動作</th>
+      <th style="border:1px solid #ccc;padding:6px 12px;text-align:left;">快捷鍵</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td style="border:1px solid #ccc;padding:6px 12px;">新增便利貼</td><td style="border:1px solid #ccc;padding:6px 12px;">Ctrl + N</td></tr>
+    <tr><td style="border:1px solid #ccc;padding:6px 12px;">放大 / 縮小字體</td><td style="border:1px solid #ccc;padding:6px 12px;">Ctrl + = / Ctrl + −</td></tr>
+    <tr><td style="border:1px solid #ccc;padding:6px 12px;">立即雲端同步</td><td style="border:1px solid #ccc;padding:6px 12px;">Ctrl + S</td></tr>
+    <tr><td style="border:1px solid #ccc;padding:6px 12px;">隱藏便利貼</td><td style="border:1px solid #ccc;padding:6px 12px;">Ctrl + W</td></tr>
+  </tbody>
+</table>
+
+<p>系統匣圖示按右鍵:新增、顯示全部、雲端同步、控制台、復原已刪除、開機啟動、結束。</p>
+
+<h2>Google Drive 雲端同步</h2>
+
+<p>便利貼內容平常存在本機(純文字 TXT,離線也能用),需要時再同步到你自己的 Google Drive。</p>
+
+<ul>
+  <li><strong>手動同步</strong>:系統匣「雲端同步」或按 <strong>Ctrl + S</strong>。</li>
+  <li><strong>自動同步</strong>:開啟時同步一次,之後編輯完約 8 秒自動同步。</li>
+  <li>標題列會有低調的狀態小圖示:🟠 有未同步變更 /(轉圈)同步中 / 已同步則不顯示。</li>
+  <li>兩台電腦同時改同一張,會<strong>保留衝突副本</strong>,不會默默蓋掉。</li>
+  <li>只使用 <code>drive.file</code> 權限,App 只看得到自己建立的檔案,碰不到你其他雲端資料。</li>
+</ul>
+
+<p>第一次使用要做一次 Google 授權:點同步後會開瀏覽器登入並同意,之後就記住了。若你是自己從原始碼打包,需要先到 Google Cloud Console 建立一組 OAuth 用戶端(桌面應用程式類型)、下載 <code>credentials.json</code> 放到專案根目錄;打包好的 exe 已經內建,直接用即可。</p>
+
+<h2>檔案存在哪</h2>
+
+<p>預設位置:<code>%LOCALAPPDATA%\StickyNotes\data\</code>,裡面有便利貼內容、顏色與設定、回收區。<strong>存檔位置可以在系統匣「控制台」裡自由更改</strong>(可選擇把現有便利貼一起搬過去)。</p>
+
+<h2>技術</h2>
+
+<ul>
+  <li>語言:Python 3.12</li>
+  <li>介面:PySide6(Qt)</li>
+  <li>雲端:Google Drive API(OAuth,<code>drive.file</code>)</li>
+  <li>打包:PyInstaller</li>
+  <li>測試:pytest(約 39 個測試)</li>
+</ul>
+
+<h2>小提醒</h2>
+
+<ul>
+  <li>目前只支援 Windows。</li>
+  <li>視窗位置/大小屬於各台電腦自己的設定,不會跨裝置同步(故意的,免得不同螢幕亂跳)。</li>
+  <li>單一檔 exe 首次啟動會稍慢一點點(它會先解壓到暫存資料夾)。</li>
+</ul>
+
+<h2>結語</h2>
+
+<p>這是個「搔自己癢處」的小工具,做起來剛好把桌面 App、Qt、OAuth 同步都練了一輪。原始碼都在 GitHub,歡迎拿去用或改:</p>
+
+<p>👉 <a href="https://github.com/tim12332000/StickyNotes" target="_blank" rel="noopener"><strong>https://github.com/tim12332000/StickyNotes</strong></a></p>
