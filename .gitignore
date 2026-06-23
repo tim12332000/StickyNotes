@@ -32,6 +32,7 @@ MANIFEST
 *.manifest
 *.spec
 !sticky-notes.spec
+!sticky-notes-onefile.spec
 
 # Installer logs
 pip-log.txt

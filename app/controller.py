@@ -12,6 +12,7 @@ from app.config import (
     AUTO_SYNC_DELAY_MILLISECONDS,
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
+    get_bundled_credentials_path,
     set_configured_data_directory,
 )
 from app.icons import asset_icon
@@ -147,6 +148,9 @@ class StickyNotesController:
         in_cwd = Path("credentials.json").resolve()
         if in_cwd.exists():
             return in_cwd
+        bundled = get_bundled_credentials_path()
+        if bundled is not None:
+            return bundled
         return in_data
 
     def _token_path(self) -> Path:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.config import get_data_directory
+from app.config import get_bundled_credentials_path, get_data_directory
 from app.storage.note_repository import NoteRepository
 from app.sync import InMemoryBackend, SyncEngine, SyncResult
 
@@ -19,6 +19,11 @@ def _build(tmp_path: Path) -> tuple[NoteRepository, InMemoryBackend, SyncEngine]
 
 def _notes_by_id(repository: NoteRepository) -> dict[str, object]:
     return {str(note.note_id): note for note in repository.load_notes()}
+
+
+def test_bundled_credentials_absent_when_running_from_source() -> None:
+    # No PyInstaller bundle when running tests, so there is nothing embedded.
+    assert get_bundled_credentials_path() is None
 
 
 def test_env_var_overrides_data_directory(tmp_path: Path, monkeypatch) -> None:

@@ -1,4 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Single-file build: produces one StickyNotes.exe (no folder needed).
+# Trade-off vs the one-folder build: the exe is larger and the first launch is
+# a little slower because it unpacks to a temp dir each run.
 
 from pathlib import Path
 
@@ -8,11 +11,10 @@ datas = [("app/assets", "app/assets")]
 binaries = []
 hiddenimports = []
 
-# Embed the OAuth client so the exe needs no separate credentials.json.
+# Embed the OAuth client so the single exe needs no separate credentials.json.
 if Path("credentials.json").exists():
     datas += [("credentials.json", ".")]
 
-# Bundle the Google Drive client stack so cloud sync works in the packaged exe.
 for _package in (
     "googleapiclient",
     "google_auth_oauthlib",
@@ -47,28 +49,21 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="StickyNotes",
     icon="app/assets/note.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="StickyNotes",
 )

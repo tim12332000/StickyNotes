@@ -76,3 +76,17 @@ def get_asset_path(name: str) -> Path:
     if bundle_root:
         return Path(bundle_root) / "app" / "assets" / name
     return Path(__file__).resolve().parent / "assets" / name
+
+
+def get_bundled_credentials_path() -> Path | None:
+    """Credentials embedded in the packaged exe, if present.
+
+    Lets a single self-contained exe sync without the user placing a separate
+    credentials.json. Returns None when running from source / not bundled.
+    """
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        candidate = Path(bundle_root) / "credentials.json"
+        if candidate.exists():
+            return candidate
+    return None
