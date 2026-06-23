@@ -4,6 +4,10 @@
 
 Windows 桌面便箋工具,風格類似 Microsoft Sticky Notes。便箋內容以 TXT 明文保存在本機,可離線使用,並可選擇透過 **Google Drive API** 在多台裝置之間同步(不依賴 Google Drive 電腦版)。
 
+## 下載
+
+免安裝單檔執行檔:**[下載 StickyNotes.exe](https://github.com/tim12332000/StickyNotes/releases/download/v0.1.0/StickyNotes.exe)**(或見 [Releases](https://github.com/tim12332000/StickyNotes/releases))。下載後雙擊即可執行,不需安裝 Python。
+
 ## 功能
 
 **便箋本體**

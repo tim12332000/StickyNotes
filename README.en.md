@@ -4,6 +4,10 @@ English · [繁體中文](README.md)
 
 A Windows desktop sticky-notes app in the spirit of Microsoft Sticky Notes. Notes are stored locally as plain-text TXT files (works fully offline) and can optionally sync across machines through the **Google Drive API** — no Google Drive desktop client required.
 
+## Download
+
+No-install single-file executable: **[Download StickyNotes.exe](https://github.com/tim12332000/StickyNotes/releases/download/v0.1.0/StickyNotes.exe)** (or see [Releases](https://github.com/tim12332000/StickyNotes/releases)). Double-click to run — no Python required.
+
 ## Features
 
 **The notes**
