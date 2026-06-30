@@ -202,7 +202,9 @@ class StickyNotesController:
 
         from app.sync import GoogleDriveBackend
 
-        backend = GoogleDriveBackend(credentials_path, self._token_path())
+        backend = GoogleDriveBackend(
+            credentials_path, self._token_path(), allow_interactive=not silent
+        )
         engine = SyncEngine(self._repository, backend, self._sync_state_path())
         worker = SyncWorker(engine, self._application)
         worker.finished_ok.connect(self._on_sync_done)

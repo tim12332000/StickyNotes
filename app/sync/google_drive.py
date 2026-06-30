@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -36,10 +37,15 @@ class GoogleDriveBackend:
         credentials_path: Path | str,
         token_path: Path | str,
         folder_name: str = DEFAULT_FOLDER_NAME,
+        *,
+        allow_interactive: bool = True,
     ) -> None:
         self._credentials_path = Path(credentials_path)
         self._token_path = Path(token_path)
         self._folder_name = folder_name
+        # A background sync must never pop a browser; only a user-initiated sync
+        # may re-run the consent flow when the saved token is no longer usable.
+        self._allow_interactive = allow_interactive
         self._service = None
         self._folder_id: str | None = None
 
@@ -54,16 +60,32 @@ class GoogleDriveBackend:
         if creds and creds.valid:
             return creds
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(self._credentials_path), SCOPES
+            try:
+                creds.refresh(Request())
+                self._token_path.write_text(creds.to_json(), encoding="utf-8")
+                return creds
+            except RefreshError:
+                # The refresh token was revoked or expired (e.g. an app still in
+                # Google's "Testing" mode expires it after 7 days). The saved
+                # token is dead — discard it and fall through to re-authorize.
+                self._discard_token()
+                creds = None
+        if not self._allow_interactive:
+            raise PermissionError(
+                "雲端授權已失效，請點選「雲端同步」重新登入 Google。"
             )
-            creds = flow.run_local_server(
-                port=0, timeout_seconds=OAUTH_TIMEOUT_SECONDS
-            )
+        flow = InstalledAppFlow.from_client_secrets_file(
+            str(self._credentials_path), SCOPES
+        )
+        creds = flow.run_local_server(port=0, timeout_seconds=OAUTH_TIMEOUT_SECONDS)
         self._token_path.write_text(creds.to_json(), encoding="utf-8")
         return creds
+
+    def _discard_token(self) -> None:
+        try:
+            self._token_path.unlink()
+        except OSError:
+            pass
 
     def _drive(self):
         if self._service is None:
